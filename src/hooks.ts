@@ -96,7 +96,6 @@ async function stateFileWrite($: EngineInterface, override: { isRouting?: boolea
 async function routingSet($: EngineInterface, isOn: boolean, options: { isDefault?: boolean } = {}): Promise<void> {
   await update($, isRoutingAtom, () => isOn)
   if (options.isDefault !== undefined) await $.store.set(STORE_IS_DEFAULT, options.isDefault)
-  $.ui.status(isOn ? LABEL : undefined)
   await stateFileWrite($)
 }
 

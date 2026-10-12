@@ -6,7 +6,6 @@ type Seen = {
   stepModels: string[]
   stepEfforts: (string | number | undefined)[]
   spawnModels: (string | undefined)[]
-  statuses: (string | undefined)[]
   commands: string[]
   writes: Record<string, string>
   opens: number
@@ -19,7 +18,7 @@ const ENGINE = { plugin: 'engine', tier: 'core' } as const
 
 // every $ call the plugin makes needs an answer, so one stub plays the engine for every scenario
 function engineStub(on: On, options: StubOptions = {}): Seen {
-  const seen: Seen = { stepModels: [], stepEfforts: [], spawnModels: [], statuses: [], commands: [], writes: {}, opens: 0 }
+  const seen: Seen = { stepModels: [], stepEfforts: [], spawnModels: [], commands: [], writes: {}, opens: 0 }
   // a real sleep stalls the 429 retry test on the mocked clock, so sleep answers at once
   on('clock.sleep', () => ({ value: undefined }))
   mock.env(on, { HOME: '/home/me', ...(options.env ?? {}) })
@@ -34,10 +33,6 @@ function engineStub(on: On, options: StubOptions = {}): Seen {
     return { value: undefined }
   })
   on('model.classify', () => ({ value: options.classifyAnswer ?? 'trivial' }))
-  on('ui.status', ($, e) => {
-    seen.statuses.push(e.text)
-    return { value: undefined }
-  })
   on('ui.log', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
   on('ui.open', () => {
@@ -113,7 +108,6 @@ test('routing on: a trivial turn runs on haiku at low effort, then the route is 
   await stepRun($, stepInput('t1'))
   expect(seen.stepModels).toEqual(['claude-haiku-5-5', SESSION_MODEL])
   expect(seen.stepEfforts).toEqual(['low', 'xhigh'])
-  expect(seen.statuses.at(-1)).toBe('CC Model Router')
   expect(seen.writes['/home/me/.claude/cc-model-router/sessions/sess-1.json']).toMatch(/"isRouting":true/)
 })
 
@@ -161,7 +155,6 @@ test('/model with a name passes through and turns routing off', async ($, on) =>
   await $.turn.start({ text: 'fix the typo', turnId: 't4' })
   await stepRun($, stepInput('t4'))
   expect(seen.stepModels).toEqual([SESSION_MODEL])
-  expect(seen.statuses.at(-1)).toBeUndefined()
 })
 
 test('/model with no args opens the picker instead of the built-in', async ($, on) => {
@@ -178,10 +171,8 @@ test('/cc-model-router on, off and status', async ($, on) => {
   await $.session.start(sessionStart())
   const turnedOn = await $.command.run(commandInput('cc-model-router', 'on'))
   expect(turnedOn.text).toMatch(/on, and the default/)
-  expect(seen.statuses.at(-1)).toBe('CC Model Router')
   const turnedOff = await $.command.run(commandInput('cc-model-router', 'off'))
   expect(turnedOff.text).toMatch(/off/)
-  expect(seen.statuses.at(-1)).toBeUndefined()
   const status = await $.command.run(commandInput('cc-model-router', 'status'))
   expect(status.text).toMatch(/CC Model Router: off/)
   expect(status.text).toMatch(/trivial\s+claude-haiku-5-5/)
