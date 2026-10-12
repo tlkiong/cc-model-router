@@ -6,7 +6,7 @@ import { type Config, configDefault, configParse, configPath, configText, type T
 import { JEV_KEY_ENV, JEV_URL, jevHeaders, jevIsRetryable, jevRequestBuild, jevResponseParse } from './jev'
 import { PICKER_PANE, pickerRows, pickerTree } from './model-picker'
 import { ONBOARDING_PANE, onboardingTree } from './onboarding'
-import { LABEL, PLUGIN, type Route, routeDrop, routeGet, routeSet, STORE_IS_DEFAULT, STORE_IS_ONBOARDED, stateFilePath, stateFileText, statusText } from './routing'
+import { LABEL, PLUGIN, type Route, routeDrop, routeGet, routeSet, STORE_IS_DEFAULT, STORE_IS_ONBOARDED, stateFilePath, stateFileText } from './routing'
 import { tierFind, tierModels, tierTableLines } from './tiers'
 
 const COMMAND = PLUGIN
@@ -96,13 +96,12 @@ async function stateFileWrite($: EngineInterface, override: { isRouting?: boolea
 async function routingSet($: EngineInterface, isOn: boolean, options: { isDefault?: boolean } = {}): Promise<void> {
   await update($, isRoutingAtom, () => isOn)
   if (options.isDefault !== undefined) await $.store.set(STORE_IS_DEFAULT, options.isDefault)
-  $.ui.status(isOn ? statusText(await read($, lastRouteAtom)) : undefined)
+  $.ui.status(isOn ? LABEL : undefined)
   await stateFileWrite($)
 }
 
 async function routeApply($: EngineInterface, route: Route): Promise<void> {
   await update($, lastRouteAtom, () => route)
-  $.ui.status(statusText(route))
   await stateFileWrite($)
 }
 

@@ -29,7 +29,7 @@ Answer `y` to add the marketplace, pick the user scope, done. On the next start 
 - Any other option sets that session model and turns routing off, as does `/model <name>` typed with a name.
 - `/cc-model-router on | off | status | config | onboard` does the same from the prompt and prints the live route, the classifier in use, and the tier table.
 
-The status line entry reads `CC Model Router: <model> / <effort>` while a routed turn runs.
+The session's status entry reads `CC Model Router` while routing is on. `/cc-model-router status` shows the live route.
 
 ## Tiers and the config file
 

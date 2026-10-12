@@ -27,10 +27,6 @@ export function routeDrop(key: RouteKey): void {
   routes.delete(routeKeyText(key))
 }
 
-export function statusText(route: Route | null): string {
-  return route === null ? `${LABEL}: on` : `${LABEL}: ${route.model} / ${route.effort}`
-}
-
 export function stateFilePath(home: string, sessionId: string): string {
   return `${home}/.claude/cc-model-router/sessions/${sessionId}.json`
 }

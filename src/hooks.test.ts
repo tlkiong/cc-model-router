@@ -113,7 +113,7 @@ test('routing on: a trivial turn runs on haiku at low effort, then the route is 
   await stepRun($, stepInput('t1'))
   expect(seen.stepModels).toEqual(['claude-haiku-5-5', SESSION_MODEL])
   expect(seen.stepEfforts).toEqual(['low', 'xhigh'])
-  expect(seen.statuses.at(-1)).toBe('CC Model Router: claude-haiku-5-5 / low')
+  expect(seen.statuses.at(-1)).toBe('CC Model Router')
   expect(seen.writes['/home/me/.claude/cc-model-router/sessions/sess-1.json']).toMatch(/"isRouting":true/)
 })
 
@@ -178,7 +178,7 @@ test('/cc-model-router on, off and status', async ($, on) => {
   await $.session.start(sessionStart())
   const turnedOn = await $.command.run(commandInput('cc-model-router', 'on'))
   expect(turnedOn.text).toMatch(/on, and the default/)
-  expect(seen.statuses.at(-1)).toBe('CC Model Router: on')
+  expect(seen.statuses.at(-1)).toBe('CC Model Router')
   const turnedOff = await $.command.run(commandInput('cc-model-router', 'off'))
   expect(turnedOff.text).toMatch(/off/)
   expect(seen.statuses.at(-1)).toBeUndefined()
