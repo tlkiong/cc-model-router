@@ -17,7 +17,7 @@ Answer `y` to add the marketplace, pick the user scope, done. On the next start 
 `/model` now opens the router's picker:
 
 ```
-1  Default (claude-fable-5-1[1m])
+1  Default
 2  CC Model Router        default  selected
 3  claude-haiku-5-5
 4  claude-sonnet-5-5
@@ -69,7 +69,7 @@ Each prompt is classified once per turn, and once per subagent spawn.
 
 ## Subagents
 
-A spawn with no explicit `model` parameter is classified on its prompt and runs on the tier's model and effort. A caller's explicit model wins. Forks always inherit the parent.
+A spawn with no explicit `model` parameter is classified on its prompt and runs on the tier's model and effort. A caller's explicit model wins. Forks always inherit the parent. Workflow agents keep their own model, since the engine ignores a model change on them.
 
 ## Status line scripts
 

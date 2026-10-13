@@ -1,8 +1,14 @@
 import type { BoxProps, ButtonProps, ElementConstructor, RenderElement, TextProps } from 'claude-code'
+import type { Config } from './config'
 import { LABEL } from './routing'
-import { modelIdNormalize } from './tiers'
+import { modelIdNormalize, tierModels } from './tiers'
 
 export const PICKER_PANE = 'cc-model-router-picker'
+
+// 16 rows fit the four default tiers; each tier adds a table line and each distinct model a picker row
+export function pickerHeight(config: Config): number {
+  return 8 + tierModels(config).length + config.tiers.length
+}
 
 export type TreeElements = { Box: ElementConstructor<BoxProps>; Text: ElementConstructor<TextProps>; Button: ElementConstructor<ButtonProps> }
 
@@ -22,7 +28,7 @@ export function pickerRows(input: PickerRowsInput): PickerRow[] {
   const session = modelIdNormalize(input.sessionModel)
   const isSessionOnTier = !input.isRouting && input.tierModels.some((model) => modelIdNormalize(model) === session)
   const rows: PickerRow[] = [
-    { key: 'default', label: `Default (${input.sessionModel})`, isSelected: !input.isRouting && !isSessionOnTier, isDefault: false, onPress: input.onDefault },
+    { key: 'default', label: 'Default', isSelected: !input.isRouting && !isSessionOnTier, isDefault: false, onPress: input.onDefault },
     { key: 'router', label: LABEL, isSelected: input.isRouting, isDefault: input.isDefault, onPress: input.onRouter },
   ]
   for (const model of input.tierModels) {

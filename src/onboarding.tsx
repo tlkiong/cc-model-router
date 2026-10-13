@@ -1,8 +1,14 @@
 import type { RenderElement } from 'claude-code'
+import type { Config } from './config'
 import type { TreeElements } from './model-picker'
 import { LABEL } from './routing'
 
 export const ONBOARDING_PANE = 'cc-model-router-onboarding'
+
+// 24 rows fit the four default tiers; each extra tier adds one table line
+export function onboardingHeight(config: Config): number {
+  return 20 + config.tiers.length
+}
 
 export type OnboardingTreeInput = {
   tableLines: readonly string[]

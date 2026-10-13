@@ -1,18 +1,22 @@
-import type { Effort } from './config'
+import type { Effort, Tier } from './config'
+import { modelIdResolve } from './tiers'
 
 export const PLUGIN = 'cc-model-router'
 export const LABEL = 'CC Model Router'
-export const STORE_IS_DEFAULT = 'isDefault'
-export const STORE_IS_ONBOARDED = 'isOnboarded'
 
 export type Route = { tier: string; model: string; effort: Effort }
 export type RouteKey = { turnId: string } | { agentId: string }
 
-// Routes live for one turn, so losing them on a hot reload costs one turn on the session model and nothing more
+// Routes live in memory only, so a hot reload costs the turns in flight their route and nothing more
 const routes = new Map<string, Route>()
 
 function routeKeyText(key: RouteKey): string {
   return 'agentId' in key ? `agent:${key.agentId}` : `turn:${key.turnId}`
+}
+
+export function routeBuild(tier: Tier): Route {
+  // An alias is resolved here, so a step never relies on the engine resolving a rewritten model name
+  return { tier: tier.name, model: modelIdResolve(tier.model), effort: tier.effort }
 }
 
 export function routeSet(key: RouteKey, route: Route): void {
@@ -25,6 +29,10 @@ export function routeGet(key: RouteKey): Route | undefined {
 
 export function routeDrop(key: RouteKey): void {
   routes.delete(routeKeyText(key))
+}
+
+export function routesClear(): void {
+  routes.clear()
 }
 
 export function stateFilePath(home: string, sessionId: string): string {

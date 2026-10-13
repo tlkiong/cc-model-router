@@ -20,16 +20,15 @@ test('jev: a configured model id and a long state are honoured', async () => {
   expect(body.state.length).toBe(8000)
 })
 
-test('jev: a good answer maps to its tier with confidence', async () => {
+test('jev: a good answer gives the chosen name', async () => {
   const text = JSON.stringify({ model: 'jev-1.13.0', answers: { tier: { type: 'choice', choice: 'moderate', confidence: 0.82, probabilities: {} } }, usage: {} })
-  expect(jevResponseParse(text, TIER_NAMES)).toEqual({ tier: 'moderate', confidence: 0.82 })
+  expect(jevResponseParse(text)).toBe('moderate')
 })
 
-test('jev: an unknown choice or a malformed body gives no tier', async () => {
-  expect(jevResponseParse(JSON.stringify({ answers: { tier: { choice: 'ultra' } } }), TIER_NAMES)).toBeUndefined()
-  expect(jevResponseParse(JSON.stringify({ answers: {} }), TIER_NAMES)).toBeUndefined()
-  expect(jevResponseParse('not json', TIER_NAMES)).toBeUndefined()
-  expect(jevResponseParse('null', TIER_NAMES)).toBeUndefined()
+test('jev: a malformed body gives no name', async () => {
+  expect(jevResponseParse(JSON.stringify({ answers: {} }))).toBeUndefined()
+  expect(jevResponseParse('not json')).toBeUndefined()
+  expect(jevResponseParse('null')).toBeUndefined()
 })
 
 test('jev: only 429 and 529 are retried', async () => {

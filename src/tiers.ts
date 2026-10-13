@@ -10,6 +10,8 @@ const PRICES: Record<string, [number, number]> = {
   'claude-opus-5-5': [4, 20],
   'claude-opus-5': [5, 25],
   'claude-opus-4-8': [5, 25],
+  'claude-opus-4-7': [5, 25],
+  'claude-opus-4-6': [5, 25],
   'claude-fable-5-1': [10, 50],
   'claude-fable-5': [10, 50],
 }
@@ -26,13 +28,17 @@ export function modelIdNormalize(model: string): string {
   return ALIASES[bare] ?? bare
 }
 
-export function priceFor(model: string): [number, number] | undefined {
-  return PRICES[modelIdNormalize(model)]
+export function modelIdResolve(model: string): string {
+  return `${modelIdNormalize(model)}${model.endsWith('[1m]') ? '[1m]' : ''}`
+}
+
+function usdText(amount: number): string {
+  return Number.isInteger(amount) ? `$${amount}` : `$${amount.toFixed(2)}`
 }
 
 export function priceText(model: string): string {
-  const price = priceFor(model)
-  return price ? `$${price[0]}/$${price[1]} per MTok` : ''
+  const price = PRICES[modelIdNormalize(model)]
+  return price ? `${usdText(price[0])}/${usdText(price[1])} per MTok` : ''
 }
 
 export function tierFind(config: Config, name: string | undefined): Tier | undefined {

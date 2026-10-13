@@ -4,12 +4,15 @@ import { atom, read, update } from 'claude-code'
 import { type ClassifierLive, classifierLabel, classifierPick, claudePromptBuild } from './classify'
 import { type Config, configDefault, configParse, configPath, configText, type Tier } from './config'
 import { JEV_KEY_ENV, JEV_URL, jevHeaders, jevIsRetryable, jevRequestBuild, jevResponseParse } from './jev'
-import { PICKER_PANE, pickerRows, pickerTree } from './model-picker'
-import { ONBOARDING_PANE, onboardingTree } from './onboarding'
-import { LABEL, PLUGIN, type Route, routeDrop, routeGet, routeSet, STORE_IS_DEFAULT, STORE_IS_ONBOARDED, stateFilePath, stateFileText } from './routing'
+import { PICKER_PANE, pickerHeight, pickerRows, pickerTree } from './model-picker'
+import { ONBOARDING_PANE, onboardingHeight, onboardingTree } from './onboarding'
+import { LABEL, PLUGIN, type Route, routeBuild, routeDrop, routeGet, routeSet, routesClear, stateFilePath, stateFileText } from './routing'
 import { tierFind, tierModels, tierTableLines } from './tiers'
 
 const COMMAND = PLUGIN
+const COMMAND_ARGS = 'on | off | status | config | onboard'
+const STORE_IS_DEFAULT = 'isDefault'
+const STORE_IS_ONBOARDED = 'isOnboarded'
 
 // The engine's scan reads atoms only from the hooks file, with literal plugin and key
 const isRoutingAtom = atom({ plugin: 'cc-model-router', key: 'isRouting' } as const, false)
@@ -19,8 +22,15 @@ const lastRouteAtom = atom({ plugin: 'cc-model-router', key: 'lastRoute' } as co
 let configLastGood: Config = configDefault
 let configErrors: string[] = []
 
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 async function homeRead($: EngineInterface): Promise<string> {
-  return (await $.env.get('HOME')) ?? '~'
+  // $.fs resolves a path that is not absolute under the project, so a missing HOME must stop the write rather than guess one
+  const home = await $.env.get('HOME')
+  if (!home) throw new Error('HOME is not set')
+  return home
 }
 
 async function configLoad($: EngineInterface): Promise<Config> {
@@ -31,20 +41,28 @@ async function configLoad($: EngineInterface): Promise<Config> {
     configErrors = []
     return configLastGood
   }
-  const text = (await $.fs.read(path)) as string
+  let text: string
+  try {
+    text = await $.fs.read(path)
+  } catch (error) {
+    configErrors = [`not readable: ${errorText(error)}`]
+    return configLastGood
+  }
   const { config, errors } = configParse(text)
   configErrors = errors
   if (config) configLastGood = config
   return configLastGood
 }
 
-async function classifierResolve($: EngineInterface, config: Config): Promise<ClassifierLive> {
-  return classifierPick(config.classifier.kind, Boolean(await $.env.get('TYPESAFE_API_KEY')))
+async function jevKeyRead($: EngineInterface): Promise<string | undefined> {
+  return $.env.get('TYPESAFE_API_KEY')
 }
 
-async function jevTierAsk($: EngineInterface, config: Config, text: string): Promise<Tier | undefined> {
-  const key = await $.env.get('TYPESAFE_API_KEY')
-  if (!key) throw new Error(`${JEV_KEY_ENV} is not set`)
+async function classifierResolve($: EngineInterface, config: Config): Promise<ClassifierLive> {
+  return classifierPick(config.classifier.kind, Boolean(await jevKeyRead($)))
+}
+
+async function jevTierAsk($: EngineInterface, config: Config, text: string, key: string): Promise<Tier | undefined> {
   const init = { method: 'POST', headers: jevHeaders(key), body: jevRequestBuild(config, text) }
   let response = await $.http.fetch(JEV_URL, init)
   if (jevIsRetryable(response.status)) {
@@ -53,11 +71,7 @@ async function jevTierAsk($: EngineInterface, config: Config, text: string): Pro
     response = await $.http.fetch(JEV_URL, init)
   }
   if (!response.ok) throw new Error(`jev responded ${response.status}`)
-  const choice = jevResponseParse(
-    response.text,
-    config.tiers.map((tier) => tier.name),
-  )
-  return choice ? tierFind(config, choice.tier) : undefined
+  return tierFind(config, jevResponseParse(response.text))
 }
 
 async function claudeTierAsk($: EngineInterface, config: Config, text: string): Promise<Tier | undefined> {
@@ -71,37 +85,37 @@ async function claudeTierAsk($: EngineInterface, config: Config, text: string): 
 }
 
 async function tierClassify($: EngineInterface, config: Config, text: string): Promise<Tier | undefined> {
-  if ((await classifierResolve($, config)) === 'jev') {
+  const key = await jevKeyRead($)
+  if (key && classifierPick(config.classifier.kind, Boolean(key)) === 'jev') {
     try {
-      const tier = await jevTierAsk($, config, text)
+      const tier = await jevTierAsk($, config, text, key)
       if (tier) return tier
     } catch (error) {
-      $.ui.log(`${PLUGIN}: jev failed (${error instanceof Error ? error.message : String(error)}), using claude`, { to: 'debug' })
+      $.ui.log(`${PLUGIN}: jev failed (${errorText(error)}), using claude`, { to: 'debug' })
     }
   }
   return claudeTierAsk($, config, text)
 }
 
-async function stateFileWrite($: EngineInterface, override: { isRouting?: boolean } = {}): Promise<void> {
+async function stateFileWrite($: EngineInterface, isRouting: boolean): Promise<void> {
   // Status line scripts read the state file; a failed write must never cost the turn its route
   try {
-    const isRouting = override.isRouting ?? (await read($, isRoutingAtom))
     const route = await read($, lastRouteAtom)
     await $.fs.write(stateFilePath(await homeRead($), await $.session.id()), stateFileText(isRouting, route, Date.now()))
   } catch (error) {
-    $.ui.log(`${PLUGIN}: state file not written (${error instanceof Error ? error.message : String(error)})`, { to: 'debug' })
+    $.ui.log(`${PLUGIN}: state file not written (${errorText(error)})`, { to: 'debug' })
   }
 }
 
 async function routingSet($: EngineInterface, isOn: boolean, options: { isDefault?: boolean } = {}): Promise<void> {
   await update($, isRoutingAtom, () => isOn)
   if (options.isDefault !== undefined) await $.store.set(STORE_IS_DEFAULT, options.isDefault)
-  await stateFileWrite($)
+  await stateFileWrite($, isOn)
 }
 
 async function routeApply($: EngineInterface, route: Route): Promise<void> {
   await update($, lastRouteAtom, () => route)
-  await stateFileWrite($)
+  await stateFileWrite($, await isRoutingRead($))
 }
 
 async function isRoutingRead($: EngineInterface): Promise<boolean> {
@@ -115,7 +129,7 @@ async function isDefaultRead($: EngineInterface): Promise<boolean> {
 async function onboardingOpen($: EngineInterface): Promise<void> {
   // Marked before the pane shows, so an Esc does not bring it back every session
   await $.store.set(STORE_IS_ONBOARDED, true)
-  await $.ui.open({ id: ONBOARDING_PANE, title: LABEL, focus: true, closeOnEscape: true, holdToasts: true, rows: 24 })
+  await $.ui.open({ id: ONBOARDING_PANE, title: LABEL, focus: true, closeOnEscape: true, holdToasts: true, rows: onboardingHeight(await configLoad($)) })
 }
 
 async function routerEnable($: EngineInterface, paneId: string): Promise<void> {
@@ -151,7 +165,7 @@ async function configReport($: EngineInterface): Promise<string> {
 
 export const register: Register = function register(on) {
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: COMMAND, description: `${LABEL}: on, off, status, config, onboard`, argumentHint: 'on | off | status | config | onboard' })
+    await $.command.register({ name: COMMAND, description: `${LABEL}: ${COMMAND_ARGS}`, argumentHint: COMMAND_ARGS })
     await configLoad($)
     await routingSet($, await isDefaultRead($))
     const isOnboarded = (await $.store.get(STORE_IS_ONBOARDED)) === true
@@ -167,23 +181,24 @@ export const register: Register = function register(on) {
         $.ui.log(`${PLUGIN}: no tier matched, this turn stays on the session model`)
         return next(e)
       }
-      const route = { tier: tier.name, model: tier.model, effort: tier.effort }
+      const route = routeBuild(tier)
       routeSet({ turnId: e.turnId }, route)
       await routeApply($, route)
     } catch (error) {
-      $.ui.log(`${PLUGIN}: classify failed (${error instanceof Error ? error.message : String(error)}), this turn stays on the session model`)
+      $.ui.log(`${PLUGIN}: classify failed (${errorText(error)}), this turn stays on the session model`)
     }
     return next(e)
   })
 
   on('agent.spawn', async ($, e, next) => {
-    // A caller's explicit model wins and a fork always inherits, so only an undecided spawn is routed
-    if (e.fork || e.model !== undefined || !(await isRoutingRead($))) return next(e)
+    // A caller's explicit model wins, a fork always inherits and a workflow agent ignores a model change, so only an undecided spawn is routed
+    if (e.fork || e.workflow || e.model !== undefined || !(await isRoutingRead($))) return next(e)
     const tier = await tierClassify($, await configLoad($), e.prompt)
     if (!tier) return next(e)
-    const result = await next({ ...e, model: tier.model })
-    if (result.agentId) routeSet({ agentId: result.agentId }, { tier: tier.name, model: tier.model, effort: tier.effort })
-    $.ui.log(`${PLUGIN}: subagent "${e.description}" -> ${tier.name} (${tier.model} / ${tier.effort})`)
+    const route = routeBuild(tier)
+    const result = await next({ ...e, model: route.model })
+    if (result.agentId) routeSet({ agentId: result.agentId }, route)
+    $.ui.log(`${PLUGIN}: subagent "${e.description}" -> ${route.tier} (${route.model} / ${route.effort})`)
     return result
   }).catch(($, e, next) => next(e))
 
@@ -194,7 +209,8 @@ export const register: Register = function register(on) {
   })
 
   on('turn.complete', async ($, e, next) => {
-    routeDrop(e.agentId ? { agentId: e.agentId } : { turnId: e.turnId })
+    // A message can wake a subagent for another run on the same id, so its route stays until the session ends
+    if (!e.agentId) routeDrop({ turnId: e.turnId })
     return next(e)
   })
 
@@ -208,7 +224,8 @@ export const register: Register = function register(on) {
   })
 
   on('session.end', async ($, e, next) => {
-    await stateFileWrite($, { isRouting: false })
+    routesClear()
+    await stateFileWrite($, false)
     return next(e)
   })
 
@@ -226,8 +243,11 @@ export const register: Register = function register(on) {
       case 'onboard':
         await onboardingOpen($)
         return { text: `${LABEL}: onboarding opened.` }
-      default:
+      case '':
+      case 'status':
         return { text: await statusReport($) }
+      default:
+        return { text: `${LABEL}: unknown "${verb}". Use ${COMMAND_ARGS}.` }
     }
   })
 
@@ -237,7 +257,7 @@ export const register: Register = function register(on) {
       await routingSet($, false)
       return result
     }
-    await $.ui.open({ id: PICKER_PANE, title: 'Select model', focus: true, closeOnEscape: true, holdToasts: true, rows: 16 })
+    await $.ui.open({ id: PICKER_PANE, title: 'Select model', focus: true, closeOnEscape: true, holdToasts: true, rows: pickerHeight(await configLoad($)) })
     return { text: `${LABEL}: pick a model in the pane.` }
   }).catch(($, e, next) => next(e))
 

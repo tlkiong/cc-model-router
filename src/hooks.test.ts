@@ -167,7 +167,7 @@ test('/model with no args opens the picker instead of the built-in', async ($, o
 })
 
 test('/cc-model-router on, off and status', async ($, on) => {
-  const seen = engineStub(on)
+  engineStub(on)
   await $.session.start(sessionStart())
   const turnedOn = await $.command.run(commandInput('cc-model-router', 'on'))
   expect(turnedOn.text).toMatch(/on, and the default/)
@@ -263,4 +263,27 @@ test('jev: a 429 is retried once, a 401 falls back to claude', async ($, on) => 
   await stepRun($, stepInput('t9'))
   expect(seen.stepModels).toEqual(['claude-fable-5-1', 'claude-haiku-5-5'])
   expect(statuses).toEqual([])
+})
+
+test('subagent: a workflow agent is never rerouted', async ($, on) => {
+  const seen = engineStub(on, { classifyAnswer: 'trivial', store: { isDefault: true, isOnboarded: true } })
+  await $.session.start(sessionStart())
+  await $.agent.spawn(spawnInput({ workflow: { runId: 'wf_1', agentIndex: 1 } }))
+  expect(seen.spawnModels).toEqual([undefined])
+})
+
+test('subagent: the route outlives one run, so a woken subagent keeps its tier', async ($, on) => {
+  const seen = engineStub(on, { classifyAnswer: 'moderate', store: { isDefault: true, isOnboarded: true } })
+  await $.session.start(sessionStart())
+  await $.agent.spawn(spawnInput())
+  await $.turn.complete({ ...completeInput('t10'), agentId: 'agent-1' })
+  await stepRun($, stepInput('t11', 'agent-1'))
+  expect(seen.stepModels).toEqual(['claude-sonnet-5-5'])
+})
+
+test('/cc-model-router with an unknown verb names the valid ones', async ($, on) => {
+  engineStub(on)
+  await $.session.start(sessionStart())
+  const result = await $.command.run(commandInput('cc-model-router', 'stauts'))
+  expect(result.text).toMatch(/unknown "stauts"\. Use on \| off \| status \| config \| onboard\./)
 })
