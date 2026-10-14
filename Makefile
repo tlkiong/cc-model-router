@@ -5,7 +5,6 @@ MOD_LINK := $(HOME)/.claude/skills/$(MOD_NAME)
 
 setup:
 	bun install
-	bunx husky
 	bun src/scripts/setup-check.ts
 	$(MAKE) link
 
@@ -28,5 +27,6 @@ lint:
 typecheck:
 	@[ -f .claude-plugin/types/claude-code/index.d.ts ] || { echo ".claude-plugin/types missing: run 'make link', then start claude once in this repo so the engine writes the mod's types"; exit 1; }
 	bunx tsc -p . --noEmit
+	bunx tsc -p src/scripts --noEmit
 
 check: lint typecheck validate test

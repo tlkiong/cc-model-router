@@ -4,8 +4,8 @@
     "": {
       "name": "cc-model-router",
       "devDependencies": {
-        "@biomejs/biome": "^2.1.0",
-        "@types/bun": "latest",
+        "@biomejs/biome": "^2.5.15",
+        "@types/bun": "^1.4.3",
         "husky": "^9.1.7",
         "lint-staged": "^16.1.0",
         "typescript": "^5.9.0",
