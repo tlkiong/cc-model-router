@@ -1,0 +1,6 @@
+{
+  "name": "cc-model-router",
+  "owner": { "name": "tlkiong" },
+  "description": "CC Model Router: cheapest whitelisted Claude model per turn",
+  "plugins": [{ "name": "cc-model-router", "source": "./", "description": "Routes each turn and subagent to the cheapest whitelisted Claude model" }]
+}

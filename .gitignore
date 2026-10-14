@@ -1,0 +1,6 @@
+node_modules/
+.claude-plugin/types/
+.husky/_/
+graft/
+.ignore
+tmp/

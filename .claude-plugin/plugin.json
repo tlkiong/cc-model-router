@@ -1,0 +1,12 @@
+{
+  "name": "cc-model-router",
+  "version": "0.1.0",
+  "description": "Routes each turn and subagent to the cheapest whitelisted Claude model. Pick it as option 2 in /model.",
+  "author": {
+    "name": "tlkiong"
+  },
+  "repository": "https://github.com/tlkiong/cc-model-router",
+  "license": "MIT",
+  "keywords": ["claude-code", "mod", "model", "router", "cost"],
+  "types": "./types/index.d.ts"
+}

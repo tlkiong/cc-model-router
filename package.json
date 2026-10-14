@@ -1,0 +1,22 @@
+{
+  "name": "cc-model-router",
+  "version": "0.1.0",
+  "description": "Claude Code mod that routes each turn and subagent to the cheapest whitelisted Claude model",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "lint:fix": "biome check --write .",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,json}": "biome check --write",
+    "*.{ts,tsx}": "bun src/scripts/comment-clean.ts"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "@types/bun": "^1.4.3",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.1.0",
+    "typescript": "^5.9.0"
+  }
+}
