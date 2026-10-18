@@ -10,7 +10,7 @@ import { LABEL, PLUGIN, type Route, routeBuild, routeDrop, routeGet, routeSet, r
 import { tierFind, tierModels, tierTableLines } from './tiers'
 
 const COMMAND = PLUGIN
-const COMMAND_ARGS = 'on | off | status | config | onboard'
+const COMMAND_ARGS = 'on | off | status | config | update-config | onboard'
 const STORE_IS_DEFAULT = 'isDefault'
 const STORE_IS_ONBOARDED = 'isOnboarded'
 
@@ -163,6 +163,20 @@ async function configReport($: EngineInterface): Promise<string> {
   return lines.join('\n')
 }
 
+async function configUpdate($: EngineInterface): Promise<string> {
+  const path = configPath(await homeRead($))
+  const text = configText(configDefault)
+  const old = (await $.fs.exists(path)) ? await $.fs.read(path) : ''
+  if (old === text) return `${LABEL}: config already matches the defaults.`
+  // Custom tiers are replaced too, so the old file stays where the user can copy them back
+  if (old) await $.fs.write(`${path}.bak`, old)
+  await $.fs.write(path, text)
+  configLastGood = configDefault
+  configErrors = []
+  const lines = [`${LABEL}: config updated to the defaults.`, ...(old ? [`previous file saved to ${path}.bak`] : []), '', ...tierTableLines(configDefault)]
+  return lines.join('\n')
+}
+
 export const register: Register = function register(on) {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: COMMAND, description: `${LABEL}: ${COMMAND_ARGS}`, argumentHint: COMMAND_ARGS })
@@ -240,6 +254,8 @@ export const register: Register = function register(on) {
         return { text: `${LABEL} off. /model picks the session model again.` }
       case 'config':
         return { text: await configReport($) }
+      case 'update-config':
+        return { text: await configUpdate($) }
       case 'onboard':
         await onboardingOpen($)
         return { text: `${LABEL}: onboarding opened.` }

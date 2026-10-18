@@ -10,9 +10,10 @@ export type Config = { tiers: Tier[]; classifier: { kind: ClassifierKind; model:
 export const configDefault: Config = {
   tiers: [
     { name: 'trivial', model: 'claude-haiku-5-5', effort: 'low', criteria: 'one-line answers, typo or rename, reading a file, formatting, simple factual question' },
-    { name: 'moderate', model: 'claude-sonnet-5-5', effort: 'medium', criteria: 'single-file edit, small feature, straightforward bug, tests for existing code' },
-    { name: 'complex', model: 'claude-opus-5-5', effort: 'high', criteria: 'multi-file change, debugging across modules, refactor, design decision with known constraints' },
-    { name: 'hardest', model: 'claude-fable-5-1', effort: 'xhigh', criteria: 'architecture, ambiguous spec, security-sensitive work, long autonomous multi-step task' },
+    { name: 'moderate', model: 'claude-sonnet-5-5', effort: 'high', criteria: 'single-file edit, small feature, straightforward bug, tests for existing code' },
+    { name: 'complex', model: 'claude-opus-5-5', effort: 'medium', criteria: 'multi-file change, debugging across modules, refactor, design decision with known constraints' },
+    { name: 'hardest', model: 'claude-opus-5-5', effort: 'xhigh', criteria: 'architecture, ambiguous spec, security-sensitive work, long autonomous multi-step task' },
+    { name: 'escalate', model: 'claude-fable-5-1', effort: 'high', criteria: 'retry of a fix that already failed, still broken after repeated attempts, flagship-quality writing' },
   ],
   classifier: { kind: 'auto', model: '' },
 }

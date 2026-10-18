@@ -1,6 +1,6 @@
 # CC Model Router
 
-A Claude Code mod that sends each turn, and each subagent, to the cheapest Claude model whose tier fits the prompt. A typo fix runs on Haiku at low effort. An architecture question runs on Fable at xhigh. You keep one session and stop paying top-tier prices for trivial turns.
+A Claude Code mod that sends each turn, and each subagent, to the cheapest Claude model whose tier fits the prompt. A typo fix runs on Haiku at low effort. An architecture question runs on Opus at xhigh, and Fable only gets work that already failed once. You keep one session and stop paying top-tier prices for trivial turns.
 
 ## Install
 
@@ -27,21 +27,22 @@ Answer `y` to add the marketplace, pick the user scope, done. On the next start 
 
 - Option 2 turns routing on and makes it the default for new sessions.
 - Any other option sets that session model and turns routing off, as does `/model <name>` typed with a name.
-- `/cc-model-router on | off | status | config | onboard` does the same from the prompt and prints the live route, the classifier in use, and the tier table.
+- `/cc-model-router on | off | status | config | update-config | onboard` does the same from the prompt and prints the live route, the classifier in use, and the tier table.
 
 `/cc-model-router status` shows the live route. The status line recipe below shows the router's name in place of the model.
 
 ## Tiers and the config file
 
-Tiers live in `~/.claude/cc-model-router/config.json`, written with these defaults on first start. Edit it freely: any number of tiers, in the order the classifier sees them, cheapest first. Edits apply on the next turn, no restart.
+Tiers live in `~/.claude/cc-model-router/config.json`, written with these defaults on first start. Edit it freely: any number of tiers, in the order the classifier sees them, cheapest first. Edits apply on the next turn, no restart. After a plugin update, `/cc-model-router update-config` swaps in the new defaults and keeps your old file as `config.json.bak`.
 
 ```json
 {
   "tiers": [
     { "name": "trivial",  "model": "claude-haiku-5-5",  "effort": "low",    "criteria": "one-line answers, typo or rename, reading a file, formatting, simple factual question" },
-    { "name": "moderate", "model": "claude-sonnet-5-5", "effort": "medium", "criteria": "single-file edit, small feature, straightforward bug, tests for existing code" },
-    { "name": "complex",  "model": "claude-opus-5-5",   "effort": "high",   "criteria": "multi-file change, debugging across modules, refactor, design decision with known constraints" },
-    { "name": "hardest",  "model": "claude-fable-5-1",  "effort": "xhigh",  "criteria": "architecture, ambiguous spec, security-sensitive work, long autonomous multi-step task" }
+    { "name": "moderate", "model": "claude-sonnet-5-5", "effort": "high",   "criteria": "single-file edit, small feature, straightforward bug, tests for existing code" },
+    { "name": "complex",  "model": "claude-opus-5-5",   "effort": "medium", "criteria": "multi-file change, debugging across modules, refactor, design decision with known constraints" },
+    { "name": "hardest",  "model": "claude-opus-5-5",   "effort": "xhigh",  "criteria": "architecture, ambiguous spec, security-sensitive work, long autonomous multi-step task" },
+    { "name": "escalate", "model": "claude-fable-5-1",  "effort": "high",   "criteria": "retry of a fix that already failed, still broken after repeated attempts, flagship-quality writing" }
   ],
   "classifier": { "kind": "auto", "model": "" }
 }
