@@ -42,7 +42,7 @@ test('tiers: aliases and the 1m suffix normalise to one id', async () => {
 
 test('tiers: the table has one line per tier with model and effort', async () => {
   const lines = tierTableLines(configDefault)
-  expect(lines).toHaveLength(4)
+  expect(lines).toHaveLength(5)
   expect(lines[0]).toMatch(/^trivial\s+claude-haiku-5-5\s+low\s+\$0\.10\/\$0\.50 per MTok$/)
 })
 

@@ -111,13 +111,22 @@ test('routing on: a trivial turn runs on haiku at low effort, then the route is 
   expect(seen.writes['/home/me/.claude/cc-model-router/sessions/sess-1.json']).toMatch(/"isRouting":true/)
 })
 
-test('routing on: the hardest tier reaches fable at xhigh', async ($, on) => {
+test('routing on: the hardest tier reaches opus at xhigh', async ($, on) => {
   const seen = engineStub(on, { classifyAnswer: 'hardest', store: { isDefault: true, isOnboarded: true } })
   await $.session.start(sessionStart())
   await $.turn.start({ text: 'redesign the auth architecture', turnId: 't2' })
   await stepRun($, stepInput('t2'))
-  expect(seen.stepModels).toEqual(['claude-fable-5-1'])
+  expect(seen.stepModels).toEqual(['claude-opus-5-5'])
   expect(seen.stepEfforts).toEqual(['xhigh'])
+})
+
+test('routing on: the escalate tier reaches fable at high', async ($, on) => {
+  const seen = engineStub(on, { classifyAnswer: 'escalate', store: { isDefault: true, isOnboarded: true } })
+  await $.session.start(sessionStart())
+  await $.turn.start({ text: 'that fix did not work, still broken', turnId: 't2b' })
+  await stepRun($, stepInput('t2b'))
+  expect(seen.stepModels).toEqual(['claude-fable-5-1'])
+  expect(seen.stepEfforts).toEqual(['high'])
 })
 
 test('routing on: an unknown tier name leaves the turn alone', async ($, on) => {
@@ -136,7 +145,7 @@ test('subagent: an undecided spawn gets the tier model and its steps get the eff
   expect(spawned.agentId).toBe('agent-1')
   await stepRun($, stepInput('t9', 'agent-1'))
   expect(seen.stepModels).toEqual(['claude-sonnet-5-5'])
-  expect(seen.stepEfforts).toEqual(['medium'])
+  expect(seen.stepEfforts).toEqual(['high'])
 })
 
 test('subagent: an explicit model or a fork is never rerouted', async ($, on) => {
@@ -246,7 +255,7 @@ test('jev: with a key the classifier posts to typesafe and maps the choice', asy
   expect(bodies).toHaveLength(1)
   expect(JSON.parse(bodies[0] ?? '{}').questions.tier.criteria.complex).toBe(configDefault.tiers[2]?.criteria)
   expect(seen.stepModels).toEqual(['claude-opus-5-5'])
-  expect(seen.stepEfforts).toEqual(['high'])
+  expect(seen.stepEfforts).toEqual(['medium'])
 })
 
 test('jev: a 429 is retried once, a 401 falls back to claude', async ($, on) => {
@@ -261,7 +270,7 @@ test('jev: a 429 is retried once, a 401 falls back to claude', async ($, on) => 
   await stepRun($, stepInput('t8'))
   await $.turn.start({ text: 'b', turnId: 't9' })
   await stepRun($, stepInput('t9'))
-  expect(seen.stepModels).toEqual(['claude-fable-5-1', 'claude-haiku-5-5'])
+  expect(seen.stepModels).toEqual(['claude-opus-5-5', 'claude-haiku-5-5'])
   expect(statuses).toEqual([])
 })
 

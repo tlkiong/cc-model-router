@@ -35,8 +35,8 @@ test('config: empty tiers and bad JSON are refused', async () => {
   expect(configParse('[]').errors).toEqual(['top level must be an object'])
 })
 
-test('config: a fifth tier is accepted in file order', async () => {
+test('config: an extra tier is accepted in file order', async () => {
   const tiers = [...configDefault.tiers, { name: 'review', model: 'claude-opus-5-5', effort: 'max' as const, criteria: 'code review' }]
   const { config } = configParse(JSON.stringify({ tiers }))
-  expect(config?.tiers.map((tier) => tier.name)).toEqual(['trivial', 'moderate', 'complex', 'hardest', 'review'])
+  expect(config?.tiers.map((tier) => tier.name)).toEqual(['trivial', 'moderate', 'complex', 'hardest', 'escalate', 'review'])
 })
