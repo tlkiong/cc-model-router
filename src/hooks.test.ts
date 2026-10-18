@@ -11,7 +11,7 @@ type Seen = {
   opens: number
 }
 
-type StubOptions = { classifyAnswer?: string; hasConfigFile?: boolean; env?: Record<string, string>; store?: Record<string, unknown> }
+type StubOptions = { classifyAnswer?: string; hasConfigFile?: boolean; configFile?: string; env?: Record<string, string>; store?: Record<string, unknown> }
 
 const SESSION_MODEL = 'claude-fable-5-1[1m]'
 const ENGINE = { plugin: 'engine', tier: 'core' } as const
@@ -27,7 +27,7 @@ function engineStub(on: On, options: StubOptions = {}): Seen {
   on('session.id', () => ({ value: 'sess-1' }))
   on('session.model', () => ({ value: SESSION_MODEL }))
   on('fs.exists', () => ({ value: options.hasConfigFile ?? true }))
-  on('fs.read', () => ({ value: configText(configDefault) }))
+  on('fs.read', () => ({ value: options.configFile ?? configText(configDefault) }))
   on('fs.write', ($, e) => {
     seen.writes[e.path] = e.text
     return { value: undefined }
@@ -294,5 +294,23 @@ test('/cc-model-router with an unknown verb names the valid ones', async ($, on)
   engineStub(on)
   await $.session.start(sessionStart())
   const result = await $.command.run(commandInput('cc-model-router', 'stauts'))
-  expect(result.text).toMatch(/unknown "stauts"\. Use on \| off \| status \| config \| onboard\./)
+  expect(result.text).toMatch(/unknown "stauts"\. Use on \| off \| status \| config \| update-config \| onboard\./)
+})
+
+test('/cc-model-router update-config swaps in the defaults and keeps the old file', async ($, on) => {
+  const oldText = '{ "tiers": [{ "name": "mine", "model": "opus", "effort": "max", "criteria": "x" }] }\n'
+  const seen = engineStub(on, { configFile: oldText })
+  await $.session.start(sessionStart())
+  const result = await $.command.run(commandInput('cc-model-router', 'update-config'))
+  expect(result.text).toMatch(/config updated to the defaults/)
+  expect(seen.writes['/home/me/.claude/cc-model-router/config.json.bak']).toBe(oldText)
+  expect(seen.writes['/home/me/.claude/cc-model-router/config.json']).toBe(configText(configDefault))
+})
+
+test('/cc-model-router update-config leaves a file that already matches alone', async ($, on) => {
+  const seen = engineStub(on)
+  await $.session.start(sessionStart())
+  const result = await $.command.run(commandInput('cc-model-router', 'update-config'))
+  expect(result.text).toMatch(/already matches the defaults/)
+  expect(Object.keys(seen.writes).filter((path) => path.includes('config.json'))).toEqual([])
 })
