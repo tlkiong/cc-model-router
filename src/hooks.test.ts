@@ -1,5 +1,6 @@
-import type { AgentSpawnInput, CommandRunInput, On, SessionStartInput, TurnCompleteInput, TurnStepInput } from 'claude-code'
+import type { AgentSpawnInput, CommandRunInput, On, PromptSubmitInput, SessionContextBreakdown, SessionStartInput, TurnCompleteInput, TurnStepInput } from 'claude-code'
 import { type Engine, expect, mock, test } from 'claude-code/testing'
+import { CLEAR_NO, CLEAR_YES, TASK_NEW, TASK_SAME } from './clear'
 import { configDefault, configText } from './config'
 
 type Seen = {
@@ -9,16 +10,29 @@ type Seen = {
   commands: string[]
   writes: Record<string, string>
   opens: number
+  asks: string[]
+  submits: PromptSubmitInput[]
+  fills: string[]
+  taskClassifies: number
 }
 
-type StubOptions = { classifyAnswer?: string; hasConfigFile?: boolean; configFile?: string; env?: Record<string, string>; store?: Record<string, unknown> }
+type StubOptions = {
+  classifyAnswer?: string
+  taskAnswer?: string
+  askAnswer?: string
+  messagesTokens?: number
+  hasConfigFile?: boolean
+  configFile?: string
+  env?: Record<string, string>
+  store?: Record<string, unknown>
+}
 
 const SESSION_MODEL = 'claude-fable-5-1[1m]'
 const ENGINE = { plugin: 'engine', tier: 'core' } as const
 
 // every $ call the plugin makes needs an answer, so one stub plays the engine for every scenario
 function engineStub(on: On, options: StubOptions = {}): Seen {
-  const seen: Seen = { stepModels: [], stepEfforts: [], spawnModels: [], commands: [], writes: {}, opens: 0 }
+  const seen: Seen = { stepModels: [], stepEfforts: [], spawnModels: [], commands: [], writes: {}, opens: 0, asks: [], submits: [], fills: [], taskClassifies: 0 }
   // a real sleep stalls the 429 retry test on the mocked clock, so sleep answers at once
   on('clock.sleep', () => ({ value: undefined }))
   mock.env(on, { HOME: '/home/me', ...(options.env ?? {}) })
@@ -32,7 +46,35 @@ function engineStub(on: On, options: StubOptions = {}): Seen {
     seen.writes[e.path] = e.text
     return { value: undefined }
   })
-  on('model.classify', () => ({ value: options.classifyAnswer ?? 'trivial' }))
+  on('model.classify', ($, e) => {
+    if (!e.labels.includes(TASK_NEW)) return { value: options.classifyAnswer ?? 'trivial' }
+    seen.taskClassifies += 1
+    return { value: options.taskAnswer ?? TASK_SAME }
+  })
+  on('session.usage', () => {
+    const breakdown = { categories: [{ name: 'Messages', tokens: options.messagesTokens ?? 0, color: '', isDeferred: false, kind: 'used' }] } as unknown as SessionContextBreakdown
+    return { value: { startedAt: 0, context: { window: 200000, breakdown }, rateLimits: [] } }
+  })
+  on('session.messages', () => ({
+    value: [
+      { role: 'user', text: 'fix the login bug', toolUses: [] },
+      { role: 'assistant', text: 'fixed in auth.ts', toolUses: [] },
+    ],
+  }))
+  // $.ui.ask is raised as an AskUserQuestion tool call, answered by question text
+  on('tool.call', { tool: 'AskUserQuestion' }, ($, e) => {
+    const question = e.questions[0]?.question ?? ''
+    seen.asks.push(question)
+    return { result: { questions: e.questions, answers: { [question]: options.askAnswer ?? CLEAR_NO } } }
+  })
+  on('prompt.submit', ($, e) => {
+    seen.submits.push(e)
+    return { text: e.text }
+  })
+  on('prompt.fill', ($, e) => {
+    seen.fills.push(e.text)
+    return { isFilled: true }
+  })
   on('ui.log', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
   on('ui.open', () => {
@@ -313,4 +355,73 @@ test('/cc-model-router update-config leaves a file that already matches alone', 
   const result = await $.command.run(commandInput('cc-model-router', 'update-config'))
   expect(result.text).toMatch(/already matches the defaults/)
   expect(Object.keys(seen.writes).filter((path) => path.includes('config.json'))).toEqual([])
+})
+
+function promptInput(text: string): PromptSubmitInput {
+  return { text, wait: false, origin: { kind: 'composer' } }
+}
+
+// The clear runs unawaited once the submit is answered, so the test waits for it to land
+async function settled(isDone: () => boolean): Promise<void> {
+  for (let tries = 0; tries < 500 && !isDone(); tries += 1) await Promise.resolve()
+}
+
+const ROUTING_ON = { isDefault: true, isOnboarded: true }
+
+test('subagent: general-purpose is capped at moderate, other types keep the classifier pick', async ($, on) => {
+  const seen = engineStub(on, { classifyAnswer: 'hardest', store: ROUTING_ON })
+  await $.session.start(sessionStart())
+  await $.agent.spawn(spawnInput({ subagentType: 'general-purpose' }))
+  await stepRun($, stepInput('t20', 'agent-1'))
+  await $.agent.spawn(spawnInput({ subagentType: 'Explore' }))
+  expect(seen.spawnModels).toEqual(['claude-sonnet-5-5', 'claude-opus-5-5'])
+  expect(seen.stepEfforts).toEqual(['high'])
+})
+
+test('subagent: a general-purpose pick below the ceiling stays cheap', async ($, on) => {
+  const seen = engineStub(on, { classifyAnswer: 'trivial', store: ROUTING_ON })
+  await $.session.start(sessionStart())
+  await $.agent.spawn(spawnInput({ subagentType: 'general-purpose' }))
+  expect(seen.spawnModels).toEqual(['claude-haiku-5-5'])
+})
+
+test('new task: Clear runs /clear, keeps routing on and resends the prompt as the user', async ($, on) => {
+  const seen = engineStub(on, { taskAnswer: TASK_NEW, askAnswer: CLEAR_YES, messagesTokens: 182000, store: ROUTING_ON })
+  await $.session.start(sessionStart('terminal'))
+  const result = await $.prompt.submit(promptInput('write a haiku about cats'))
+  expect(result.drop).toMatch(/clearing the old context/)
+  await settled(() => seen.submits.length > 0)
+  // No route yet, so the price is the session model's (fable)
+  expect(seen.asks).toEqual(['New task detected. Clearing 182k tokens of old context saves about $0.18 per request, $2.27 when the router changes model. Clear first?'])
+  expect(seen.commands).toEqual(['clear'])
+  expect(seen.submits.map((submit) => [submit.text, submit.origin])).toEqual([['write a haiku about cats', { kind: 'plugin', name: 'cc-model-router', asUser: true }]])
+  expect(seen.writes['/home/me/.claude/cc-model-router/sessions/sess-1.json']).toMatch(/"isRouting":true/)
+})
+
+test('new task: Keep context sends the prompt as typed', async ($, on) => {
+  const seen = engineStub(on, { taskAnswer: TASK_NEW, askAnswer: CLEAR_NO, messagesTokens: 182000, store: ROUTING_ON })
+  await $.session.start(sessionStart('terminal'))
+  const result = await $.prompt.submit(promptInput('write a haiku about cats'))
+  expect(result.text).toBe('write a haiku about cats')
+  expect(seen.asks).toHaveLength(1)
+  expect(seen.commands).toEqual([])
+})
+
+test('new task: a follow-up, a small context or routing off never asks', async ($, on) => {
+  const seen = engineStub(on, { taskAnswer: TASK_SAME, askAnswer: CLEAR_YES, messagesTokens: 182000, store: ROUTING_ON })
+  await $.session.start(sessionStart('terminal'))
+  await $.prompt.submit(promptInput('now add a test for it'))
+  expect(seen.taskClassifies).toBe(1)
+  await $.command.run(commandInput('cc-model-router', 'off'))
+  await $.prompt.submit(promptInput('write a haiku about cats'))
+  expect(seen.taskClassifies).toBe(1)
+  expect(seen.asks).toEqual([])
+})
+
+test('new task: under the token floor the classifier is never called', async ($, on) => {
+  const seen = engineStub(on, { taskAnswer: TASK_NEW, askAnswer: CLEAR_YES, messagesTokens: 5000, store: ROUTING_ON })
+  await $.session.start(sessionStart('terminal'))
+  const result = await $.prompt.submit(promptInput('write a haiku about cats'))
+  expect(result.text).toBe('write a haiku about cats')
+  expect(seen.taskClassifies).toBe(0)
 })

@@ -5,7 +5,8 @@ export const CLASSIFIER_KINDS = ['auto', 'jev', 'claude'] as const
 export type ClassifierKind = (typeof CLASSIFIER_KINDS)[number]
 
 export type Tier = { name: string; model: string; effort: Effort; criteria: string }
-export type Config = { tiers: Tier[]; classifier: { kind: ClassifierKind; model: string } }
+export type NewTask = { isAsking: boolean; minTokens: number }
+export type Config = { tiers: Tier[]; subagents: Record<string, string>; newTask: NewTask; classifier: { kind: ClassifierKind; model: string } }
 
 export const configDefault: Config = {
   tiers: [
@@ -15,6 +16,8 @@ export const configDefault: Config = {
     { name: 'hardest', model: 'claude-opus-5-5', effort: 'xhigh', criteria: 'architecture, ambiguous spec, security-sensitive work, long autonomous multi-step task' },
     { name: 'escalate', model: 'claude-fable-5-1', effort: 'high', criteria: 'retry of a fix that already failed, still broken after repeated attempts, flagship-quality writing' },
   ],
+  subagents: { 'general-purpose': 'moderate' },
+  newTask: { isAsking: true, minTokens: 20000 },
   classifier: { kind: 'auto', model: '' },
 }
 
@@ -53,10 +56,10 @@ export function configParse(text: string): { config: Config | null; errors: stri
 
   const errors: string[] = []
   const tiers: Tier[] = []
+  const names = new Set<string>()
   if (!Array.isArray(raw.tiers) || raw.tiers.length === 0) {
     errors.push('tiers must be a non-empty array')
   } else {
-    const names = new Set<string>()
     raw.tiers.forEach((entry, index) => {
       const at = `tiers[${index}]`
       if (!isRecord(entry)) {
@@ -75,6 +78,34 @@ export function configParse(text: string): { config: Config | null; errors: stri
     })
   }
 
+  // A config written before this key existed keeps the default ceilings; one naming a tier the file lacks is skipped when applied
+  let subagents = configDefault.subagents
+  if (raw.subagents !== undefined) {
+    if (!isRecord(raw.subagents)) {
+      errors.push('subagents must be an object of agent type to tier name')
+    } else {
+      subagents = {}
+      for (const [agentType, tierName] of Object.entries(raw.subagents)) {
+        if (typeof tierName === 'string' && names.has(tierName)) subagents[agentType] = tierName
+        else errors.push(`subagents["${agentType}"] must name one of the tiers`)
+      }
+    }
+  }
+
+  let newTask = configDefault.newTask
+  if (raw.newTask !== undefined) {
+    if (!isRecord(raw.newTask)) {
+      errors.push('newTask must be an object')
+    } else {
+      const isAsking = raw.newTask.isAsking ?? configDefault.newTask.isAsking
+      const minTokens = raw.newTask.minTokens ?? configDefault.newTask.minTokens
+      if (typeof isAsking !== 'boolean') errors.push('newTask.isAsking must be true or false')
+      const isMinTokensValid = typeof minTokens === 'number' && Number.isFinite(minTokens) && minTokens >= 0
+      if (!isMinTokensValid) errors.push('newTask.minTokens must be a number, 0 or more')
+      if (typeof isAsking === 'boolean' && isMinTokensValid) newTask = { isAsking, minTokens }
+    }
+  }
+
   let classifier: Config['classifier'] = { kind: 'auto', model: '' }
   if (raw.classifier !== undefined) {
     if (!isRecord(raw.classifier)) {
@@ -89,5 +120,5 @@ export function configParse(text: string): { config: Config | null; errors: stri
   }
 
   if (errors.length > 0) return { config: null, errors }
-  return { config: { tiers, classifier }, errors: [] }
+  return { config: { tiers, subagents, newTask, classifier }, errors: [] }
 }

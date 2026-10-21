@@ -44,6 +44,8 @@ Tiers live in `~/.claude/cc-model-router/config.json`, written with these defaul
     { "name": "hardest",  "model": "claude-opus-5-5",   "effort": "xhigh",  "criteria": "architecture, ambiguous spec, security-sensitive work, long autonomous multi-step task" },
     { "name": "escalate", "model": "claude-fable-5-1",  "effort": "high",   "criteria": "retry of a fix that already failed, still broken after repeated attempts, flagship-quality writing" }
   ],
+  "subagents": { "general-purpose": "moderate" },
+  "newTask": { "isAsking": true, "minTokens": 20000 },
   "classifier": { "kind": "auto", "model": "" }
 }
 ```
@@ -54,6 +56,9 @@ Tiers live in `~/.claude/cc-model-router/config.json`, written with these defaul
 | `tiers[].model` | any Claude model id or alias (`haiku`, `sonnet`, `opus`, `fable`), `[1m]` suffix allowed |
 | `tiers[].effort` | `low`, `medium`, `high`, `xhigh`, `max` |
 | `tiers[].criteria` | one line of what the tier covers; the classifier reads it verbatim |
+| `subagents` | agent type to tier name: the highest tier a spawn of that type runs on. `{}` turns ceilings off |
+| `newTask.isAsking` | `true` offers a `/clear` when a prompt starts a new task, `false` never asks |
+| `newTask.minTokens` | conversation tokens below which the new-task check is skipped |
 | `classifier.kind` | `auto` (Jev when `TYPESAFE_API_KEY` is set, else Claude), `jev`, `claude` |
 | `classifier.model` | Jev model id (default `jev-latest`) or a Claude alias/id for the Claude classifier; empty for the provider default |
 
@@ -71,6 +76,25 @@ Each prompt is classified once per turn, and once per subagent spawn.
 ## Subagents
 
 A spawn with no explicit `model` parameter is classified on its prompt and runs on the tier's model and effort. A caller's explicit model wins. Forks always inherit the parent. Workflow agents keep their own model, since the engine ignores a model change on them.
+
+A ceiling in `subagents` caps the pick for that agent type. By default a `general-purpose` agent runs on `moderate` (Sonnet 5.5, high) at most, and on `moderate` when the classifier fails. A cheaper pick stays cheaper, so a one-line brief still runs on Haiku.
+
+## New task, fresh context
+
+When a prompt you type starts an unrelated task, the router offers to clear the old context first:
+
+```
+New task detected. Clearing 182k tokens of old context saves about $0.07 per request, $0.91 when the router changes model. Clear first?
+  1. Clear, then run it
+  2. Keep context
+```
+
+- **Clear, then run it** runs `/clear`, keeps routing on, and sends your prompt as your own message in the fresh conversation.
+- **Keep context**, Esc, or a typed answer sends the prompt as usual.
+- The check runs only while routing is on, on a prompt typed into an idle session, once the conversation holds `newTask.minTokens` tokens. The token count is local, so a short conversation never costs a classifier call.
+- Prompts with attachments, `@` mentions, or a leading `/` or `!` are skipped, since a resent prompt would lose them.
+- The classifier (Jev or Claude) reads your prompt and the last six messages, and answers same task or new task. When unsure it answers same task.
+- The savings are estimates for the conversation's tokens at the last routed model's price: a cache read on every request, and a full cache write when the router moves the next turn to another model.
 
 ## Status line scripts
 
@@ -113,10 +137,10 @@ make setup
 | `make test` | `src/*.test.ts` through the plugin test kit |
 | `make unlink` | remove the symlink |
 
-Layout: `src/hooks.ts` owns every call on `$` (the engine follows `$` only inside the file that declares a hook); `config.ts`, `tiers.ts`, `jev.ts`, `classify.ts`, `routing.ts`, `model-picker.tsx` and `onboarding.tsx` are pure. `types/index.d.ts` declares the mod's state contract. Conventions in `.aos/conventions.md`.
+Layout: `src/hooks.ts` owns every call on `$` (the engine follows `$` only inside the file that declares a hook); `config.ts`, `tiers.ts`, `jev.ts`, `classify.ts`, `clear.ts`, `routing.ts`, `model-picker.tsx` and `onboarding.tsx` are pure. `types/index.d.ts` declares the mod's state contract. Conventions in `.aos/conventions.md`.
 
 Project skills in `.claude/skills/`: `comment-clean` (runs on every commit through lint-staged), `git-commit`, `git-pr`.
 
 ## Not in scope
 
-Non-Claude models (they need a routing proxy), a status line shim, per-agent-type overrides, and a Jev confidence threshold.
+Non-Claude models (they need a routing proxy), a status line shim, a fixed model per agent type (ceilings only), and a Jev confidence threshold.
