@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import { atom, read, update } from 'claude-code'
 import { type Choice, type ClassifierLive, classifierLabel, classifierPick, claudePromptBuild, tierChoice } from './classify'
 import { CLEAR_HEADER, CLEAR_NO, CLEAR_YES, clearQuestion, historyLines, isNewTaskCheckable, messagesTokens, TASK_NEW, taskChoice, taskStateBuild } from './clear'
-import { type Config, configDefault, configParse, configPath, configText, type Tier } from './config'
+import { type Config, configDefault, configMerge, configParse, configPath, configText, type Tier } from './config'
 import { JEV_KEY_ENV, JEV_URL, jevHeaders, jevIsRetryable, jevRequestBuild, jevResponseParse } from './jev'
 import { PICKER_PANE, pickerHeight, pickerRows, pickerTree } from './model-picker'
 import { ONBOARDING_PANE, onboardingHeight, onboardingTree } from './onboarding'
@@ -11,7 +11,7 @@ import { LABEL, PLUGIN, type Route, routeBuild, routeDrop, routeGet, routeSet, r
 import { tierCap, tierFind, tierModels, tierTableLines } from './tiers'
 
 const COMMAND = PLUGIN
-const COMMAND_ARGS = 'on | off | status | config | update-config | onboard'
+const COMMAND_ARGS = 'on | off | status | config | update-config [--force] | onboard'
 const STORE_IS_DEFAULT = 'isDefault'
 const STORE_IS_ONBOARDED = 'isOnboarded'
 
@@ -192,17 +192,30 @@ async function configReport($: EngineInterface): Promise<string> {
   return lines.join('\n')
 }
 
-async function configUpdate($: EngineInterface): Promise<string> {
+async function configUpdate($: EngineInterface, isForced: boolean): Promise<string> {
   const path = configPath(await homeRead($))
-  const text = configText(configDefault)
   const old = (await $.fs.exists(path)) ? await $.fs.read(path) : ''
-  if (old === text) return `${LABEL}: config already matches the defaults.`
-  // Custom tiers are replaced too, so the old file stays where the user can copy them back
+  const forceHint = `Run /${COMMAND} update-config --force to replace it with the defaults.`
+  let text: string
+  let summary: string
+  if (isForced || !old) {
+    text = configText(configDefault)
+    if (old === text) return `${LABEL}: config already matches the defaults.`
+    summary = 'config replaced with the defaults.'
+  } else {
+    const merged = configMerge(old)
+    // A merged file can still fail, say a ceiling naming a tier the user's list lacks, and a broken file must never be written back
+    if (merged.errors.length > 0) return [`${LABEL}: config not updated, the merged file has errors:`, ...merged.errors.map((error) => `  ${error}`), forceHint].join('\n')
+    if (merged.added.length === 0) return `${LABEL}: config already has every key, your values are kept. ${forceHint}`
+    text = merged.text
+    summary = `config updated, added ${merged.added.join(', ')} with defaults. Your tiers and values are kept.`
+  }
+  // Custom values can go too, so the old file stays where the user can copy them back
   if (old) await $.fs.write(`${path}.bak`, old)
   await $.fs.write(path, text)
-  configLastGood = configDefault
+  configLastGood = configParse(text).config ?? configDefault
   configErrors = []
-  const lines = [`${LABEL}: config updated to the defaults.`, ...(old ? [`previous file saved to ${path}.bak`] : []), '', ...tierTableLines(configDefault)]
+  const lines = [`${LABEL}: ${summary}`, ...(old ? [`previous file saved to ${path}.bak`] : []), '', ...tierTableLines(configLastGood)]
   return lines.join('\n')
 }
 
@@ -297,7 +310,7 @@ export const register: Register = function register(on) {
   })
 
   on('command.run', { command: COMMAND }, async ($, e) => {
-    const verb = e.args.trim().split(/\s+/)[0] ?? ''
+    const [verb = '', flag = ''] = e.args.trim().split(/\s+/)
     switch (verb) {
       case 'on':
         await routingSet($, true, { isDefault: true })
@@ -308,7 +321,7 @@ export const register: Register = function register(on) {
       case 'config':
         return { text: await configReport($) }
       case 'update-config':
-        return { text: await configUpdate($) }
+        return { text: await configUpdate($, flag === '--force') }
       case 'onboard':
         await onboardingOpen($)
         return { text: `${LABEL}: onboarding opened.` }

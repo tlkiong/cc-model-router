@@ -27,13 +27,13 @@ Answer `y` to add the marketplace, pick the user scope, done. On the next start 
 
 - Option 2 turns routing on and makes it the default for new sessions.
 - Any other option sets that session model and turns routing off, as does `/model <name>` typed with a name.
-- `/cc-model-router on | off | status | config | update-config | onboard` does the same from the prompt and prints the live route, the classifier in use, and the tier table.
+- `/cc-model-router on | off | status | config | update-config [--force] | onboard` does the same from the prompt and prints the live route, the classifier in use, and the tier table.
 
 `/cc-model-router status` shows the live route. The status line recipe below shows the router's name in place of the model.
 
 ## Tiers and the config file
 
-Tiers live in `~/.claude/cc-model-router/config.json`, written with these defaults on first start. Edit it freely: any number of tiers, in the order the classifier sees them, cheapest first. Edits apply on the next turn, no restart. After a plugin update, `/cc-model-router update-config` swaps in the new defaults and keeps your old file as `config.json.bak`.
+Tiers live in `~/.claude/cc-model-router/config.json`, written with these defaults on first start. Edit it freely: any number of tiers, in the order the classifier sees them, cheapest first. Edits apply on the next turn, no restart. After a plugin update, `/cc-model-router update-config` adds any key the file lacks with its default and keeps your tiers and values. `--force` replaces the whole file with the defaults. Both keep the old file as `config.json.bak`.
 
 ```json
 {

@@ -336,24 +336,51 @@ test('/cc-model-router with an unknown verb names the valid ones', async ($, on)
   engineStub(on)
   await $.session.start(sessionStart())
   const result = await $.command.run(commandInput('cc-model-router', 'stauts'))
-  expect(result.text).toMatch(/unknown "stauts"\. Use on \| off \| status \| config \| update-config \| onboard\./)
+  expect(result.text).toMatch(/unknown "stauts"\. Use on \| off \| status \| config \| update-config \[--force\] \| onboard\./)
 })
 
-test('/cc-model-router update-config swaps in the defaults and keeps the old file', async ($, on) => {
+test('/cc-model-router update-config adds missing keys and keeps the user values', async ($, on) => {
+  const oldText = `${JSON.stringify({ tiers: configDefault.tiers, classifier: { kind: 'auto', model: 'haiku' } }, null, 2)}\n`
+  const seen = engineStub(on, { configFile: oldText })
+  await $.session.start(sessionStart())
+  const result = await $.command.run(commandInput('cc-model-router', 'update-config'))
+  expect(result.text).toMatch(/config updated, added subagents, newTask with defaults/)
+  expect(seen.writes['/home/me/.claude/cc-model-router/config.json.bak']).toBe(oldText)
+  const written = JSON.parse(seen.writes['/home/me/.claude/cc-model-router/config.json'] ?? '{}')
+  expect(written.classifier).toEqual({ kind: 'auto', model: 'haiku' })
+  expect(written.subagents).toEqual(configDefault.subagents)
+  expect(written.newTask).toEqual(configDefault.newTask)
+})
+
+test('/cc-model-router update-config refuses a merge that would not parse', async ($, on) => {
+  // The default ceiling names moderate, which this tier list lacks
   const oldText = '{ "tiers": [{ "name": "mine", "model": "opus", "effort": "max", "criteria": "x" }] }\n'
   const seen = engineStub(on, { configFile: oldText })
   await $.session.start(sessionStart())
   const result = await $.command.run(commandInput('cc-model-router', 'update-config'))
-  expect(result.text).toMatch(/config updated to the defaults/)
+  expect(result.text).toMatch(/config not updated, the merged file has errors/)
+  expect(result.text).toMatch(/subagents\["general-purpose"\] must name one of the tiers/)
+  expect(result.text).toMatch(/update-config --force/)
+  expect(Object.keys(seen.writes).filter((path) => path.includes('config.json'))).toEqual([])
+})
+
+test('/cc-model-router update-config --force replaces the file and keeps the old one', async ($, on) => {
+  const oldText = '{ "tiers": [{ "name": "mine", "model": "opus", "effort": "max", "criteria": "x" }] }\n'
+  const seen = engineStub(on, { configFile: oldText })
+  await $.session.start(sessionStart())
+  const result = await $.command.run(commandInput('cc-model-router', 'update-config --force'))
+  expect(result.text).toMatch(/config replaced with the defaults/)
   expect(seen.writes['/home/me/.claude/cc-model-router/config.json.bak']).toBe(oldText)
   expect(seen.writes['/home/me/.claude/cc-model-router/config.json']).toBe(configText(configDefault))
 })
 
-test('/cc-model-router update-config leaves a file that already matches alone', async ($, on) => {
+test('/cc-model-router update-config leaves a file that has every key alone', async ($, on) => {
   const seen = engineStub(on)
   await $.session.start(sessionStart())
   const result = await $.command.run(commandInput('cc-model-router', 'update-config'))
-  expect(result.text).toMatch(/already matches the defaults/)
+  expect(result.text).toMatch(/already has every key/)
+  const forced = await $.command.run(commandInput('cc-model-router', 'update-config --force'))
+  expect(forced.text).toMatch(/already matches the defaults/)
   expect(Object.keys(seen.writes).filter((path) => path.includes('config.json'))).toEqual([])
 })
 

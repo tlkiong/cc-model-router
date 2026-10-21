@@ -25,7 +25,7 @@ export function configPath(home: string): string {
   return `${home}/.claude/cc-model-router/config.json`
 }
 
-export function configText(config: Config): string {
+export function configText(config: Config | Record<string, unknown>): string {
   return `${JSON.stringify(config, null, 2)}\n`
 }
 
@@ -45,14 +45,28 @@ function isClassifierKind(value: unknown): value is ClassifierKind {
   return typeof value === 'string' && (CLASSIFIER_KINDS as readonly string[]).includes(value)
 }
 
-export function configParse(text: string): { config: Config | null; errors: string[] } {
+function recordParse(text: string): { raw: Record<string, unknown> | null; errors: string[] } {
   let raw: unknown
   try {
     raw = JSON.parse(text)
   } catch (error) {
-    return { config: null, errors: [`not valid JSON: ${error instanceof Error ? error.message : String(error)}`] }
+    return { raw: null, errors: [`not valid JSON: ${error instanceof Error ? error.message : String(error)}`] }
   }
-  if (!isRecord(raw)) return { config: null, errors: ['top level must be an object'] }
+  return isRecord(raw) ? { raw, errors: [] } : { raw: null, errors: ['top level must be an object'] }
+}
+
+// Only keys the file lacks get a default; a key the user set, such as an emptied subagents object, keeps its value and its place in the file
+export function configMerge(text: string): { text: string; added: string[]; errors: string[] } {
+  const { raw, errors } = recordParse(text)
+  if (!raw) return { text, added: [], errors }
+  const added = Object.keys(configDefault).filter((key) => !(key in raw))
+  const merged = configText({ ...raw, ...Object.fromEntries(added.map((key) => [key, configDefault[key as keyof Config]])) })
+  return { text: merged, added, errors: configParse(merged).errors }
+}
+
+export function configParse(text: string): { config: Config | null; errors: string[] } {
+  const { raw, errors: rawErrors } = recordParse(text)
+  if (!raw) return { config: null, errors: rawErrors }
 
   const errors: string[] = []
   const tiers: Tier[] = []
