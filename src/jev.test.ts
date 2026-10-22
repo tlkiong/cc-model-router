@@ -1,11 +1,13 @@
 import { expect, test } from 'claude-code/testing'
+import { tierChoice } from './classify'
+import { TASK_NEW, taskChoice } from './clear'
 import { configDefault } from './config'
 import { jevIsRetryable, jevRequestBuild, jevResponseParse } from './jev'
 
 const TIER_NAMES = configDefault.tiers.map((tier) => tier.name)
 
 test('jev: the request carries one choice question keyed by tier name', async () => {
-  const body = JSON.parse(jevRequestBuild(configDefault, 'fix the typo in README'))
+  const body = JSON.parse(jevRequestBuild('', tierChoice(configDefault), 'fix the typo in README'))
   expect(body.state).toBe('fix the typo in README')
   expect(body.model).toBe('jev-latest')
   expect(body.questions.tier.type).toBe('choice')
@@ -15,20 +17,20 @@ test('jev: the request carries one choice question keyed by tier name', async ()
 
 test('jev: a configured model id and a long state are honoured', async () => {
   const config = { ...configDefault, classifier: { kind: 'jev' as const, model: 'jev-1.13.0' } }
-  const body = JSON.parse(jevRequestBuild(config, 'x'.repeat(20000)))
+  const body = JSON.parse(jevRequestBuild(config.classifier.model, tierChoice(config), 'x'.repeat(20000)))
   expect(body.model).toBe('jev-1.13.0')
   expect(body.state.length).toBe(8000)
 })
 
 test('jev: a good answer gives the chosen name', async () => {
   const text = JSON.stringify({ model: 'jev-1.13.0', answers: { tier: { type: 'choice', choice: 'moderate', confidence: 0.82, probabilities: {} } }, usage: {} })
-  expect(jevResponseParse(text)).toBe('moderate')
+  expect(jevResponseParse(text, 'tier')).toBe('moderate')
 })
 
 test('jev: a malformed body gives no name', async () => {
-  expect(jevResponseParse(JSON.stringify({ answers: {} }))).toBeUndefined()
-  expect(jevResponseParse('not json')).toBeUndefined()
-  expect(jevResponseParse('null')).toBeUndefined()
+  expect(jevResponseParse(JSON.stringify({ answers: {} }), 'tier')).toBeUndefined()
+  expect(jevResponseParse('not json', 'tier')).toBeUndefined()
+  expect(jevResponseParse('null', 'tier')).toBeUndefined()
 })
 
 test('jev: only 429 and 529 are retried', async () => {
@@ -36,4 +38,13 @@ test('jev: only 429 and 529 are retried', async () => {
   expect(jevIsRetryable(529)).toBe(true)
   expect(jevIsRetryable(401)).toBe(false)
   expect(jevIsRetryable(500)).toBe(false)
+})
+
+test('jev: the new-task question goes under its own key and parses from it', async () => {
+  const body = JSON.parse(jevRequestBuild('', taskChoice(), 'state'))
+  expect(Object.keys(body.questions)).toEqual(['task'])
+  expect(Object.keys(body.questions.task.criteria)).toEqual(['same', 'new'])
+  const text = JSON.stringify({ answers: { task: { type: 'choice', choice: TASK_NEW } } })
+  expect(jevResponseParse(text, 'task')).toBe(TASK_NEW)
+  expect(jevResponseParse(text, 'tier')).toBeUndefined()
 })

@@ -47,6 +47,14 @@ export function tierFind(config: Config, name: string | undefined): Tier | undef
   })
 }
 
+// A ceiling only lowers the classifier's pick; with no pick the ceiling tier runs, so a failed classify never leaves the spawn on the parent's model
+export function tierCap(config: Config, agentType: string, tier: Tier | undefined): Tier | undefined {
+  const cap = tierFind(config, config.subagents[agentType])
+  if (!cap) return tier
+  if (!tier) return cap
+  return config.tiers.indexOf(tier) > config.tiers.indexOf(cap) ? cap : tier
+}
+
 export function tierModels(config: Config): string[] {
   return [...new Set(config.tiers.map((tier) => tier.model))]
 }
@@ -59,6 +67,21 @@ export function tierTableLines(config: Config): string[] {
   })
 }
 
-export function criteriaText(config: Config): string {
-  return config.tiers.map((tier) => `- ${tier.name}: ${tier.criteria}`).join('\n')
+// A request re-reads the cached context at a tenth of the input price; a model change writes all of it to a new cache at 1.25 times it (5-minute TTL)
+const CACHE_READ_RATE = 0.1
+const CACHE_WRITE_RATE = 1.25
+
+export function contextCost(model: string, tokens: number): { readUsd: number; writeUsd: number } | undefined {
+  const price = PRICES[modelIdNormalize(model)]
+  if (!price) return undefined
+  const inputUsd = (tokens / 1_000_000) * price[0]
+  return { readUsd: inputUsd * CACHE_READ_RATE, writeUsd: inputUsd * CACHE_WRITE_RATE }
+}
+
+export function usdEstimateText(amount: number): string {
+  return amount < 0.01 ? 'under $0.01' : `$${amount.toFixed(2)}`
+}
+
+export function tokensText(tokens: number): string {
+  return tokens < 1000 ? `${tokens}` : `${Math.round(tokens / 1000)}k`
 }
