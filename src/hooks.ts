@@ -1,5 +1,5 @@
 // The engine follows $ only inside the file that declares a hook, so every $ call lives here and the other modules stay pure
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, TurnStepChunk } from 'claude-code'
 import { atom, read, update } from 'claude-code'
 import { type Choice, type ClassifierLive, classifierLabel, classifierPick, claudePromptBuild, tierChoice } from './classify'
 import { CLEAR_HEADER, CLEAR_NO, CLEAR_YES, clearQuestion, historyLines, isNewTaskCheckable, messagesTokens, TASK_NEW, taskChoice, taskStateBuild } from './clear'
@@ -7,8 +7,8 @@ import { type Config, configDefault, configMerge, configParse, configPath, confi
 import { JEV_KEY_ENV, JEV_URL, jevHeaders, jevIsRetryable, jevRequestBuild, jevResponseParse } from './jev'
 import { PICKER_PANE, pickerHeight, pickerRows, pickerTree } from './model-picker'
 import { ONBOARDING_PANE, onboardingHeight, onboardingTree } from './onboarding'
-import { LABEL, PLUGIN, type Route, routeBuild, routeDrop, routeGet, routeSet, routesClear, stateFilePath, stateFileText } from './routing'
-import { tierCap, tierFind, tierModels, tierTableLines } from './tiers'
+import { isModelFailed, LABEL, modelFailedMark, PLUGIN, type Route, routeBuild, routeDrop, routeGet, routeSet, routeStepUp, routesClear, stateFilePath, stateFileText } from './routing'
+import { fallbackFind, tierCap, tierFind, tierModels, tierTableLines } from './tiers'
 
 const COMMAND = PLUGIN
 const COMMAND_ARGS = 'on | off | status | config | update-config [--force] | onboard'
@@ -232,12 +232,14 @@ export const register: Register = function register(on) {
   on('turn.start', async ($, e, next) => {
     if (e.text.trim().length === 0 || !(await isRoutingRead($))) return next(e)
     try {
-      const tier = await tierClassify($, await configLoad($), e.text)
+      const config = await configLoad($)
+      const tier = await tierClassify($, config, e.text)
       if (!tier) {
         $.ui.log(`${PLUGIN}: no tier matched, this turn stays on the session model`)
         return next(e)
       }
-      const route = routeBuild(tier)
+      const route = routeStepUp(routeBuild(tier), await read($, lastRouteAtom), config.stepUp)
+      if (route.effort !== tier.effort) $.ui.log(`${PLUGIN}: ${tier.name} picked again, stepping up to ${route.model} / ${route.effort}`)
       routeSet({ turnId: e.turnId }, route)
       await routeApply($, route)
     } catch (error) {
@@ -283,9 +285,43 @@ export const register: Register = function register(on) {
   }).catch(($, e, next) => next(e))
 
   on('turn.step', async function* ($, e, next) {
-    const route = routeGet(e.agentId ? { agentId: e.agentId } : { turnId: e.turnId })
-    if (!route) return yield* next(e)
-    return yield* next({ ...e, model: route.model, effort: route.effort })
+    const key = e.agentId ? { agentId: e.agentId } : { turnId: e.turnId }
+    const route = routeGet(key)
+    const step = route ? { ...e, model: route.model, effort: route.effort } : e
+    // The last good config is read, not the file: a step runs many times a turn and turn.start already loaded it
+    const fallback = fallbackFind(configLastGood, step.model)
+    if (!fallback) return yield* next(step)
+    if (isModelFailed(step.model)) return yield* next({ ...step, model: fallback })
+    // Engine chunks wait for the first content chunk, so a request refused before any content leaves nothing behind for the retry to sit beside
+    const held: TurnStepChunk[] = []
+    let isLive = false
+    const stream = next(step)
+    for await (const chunk of stream) {
+      if (isLive) {
+        yield chunk
+      } else if (chunk.kind === 'engine') {
+        held.push(chunk)
+      } else {
+        isLive = true
+        yield* held
+        yield chunk
+      }
+    }
+    const result = await stream.result
+    // A null stop reason with no content is a request that failed before a reply; an interrupt also ends that way and must not retry
+    if (isLive || result.stopReason !== null || next.signal.aborted) {
+      if (!isLive) yield* held
+      return result
+    }
+    modelFailedMark(step.model)
+    $.ui.log(`${PLUGIN}: ${step.model} failed (usage limit or not available), retrying on ${fallback} for the rest of the session`)
+    if (route) {
+      const fallbackRoute = { ...route, model: fallback }
+      routeSet(key, fallbackRoute)
+      // Only a main-thread route feeds the status line, as on turn.start
+      if (!e.agentId) await routeApply($, fallbackRoute)
+    }
+    return yield* next({ ...step, model: fallback })
   })
 
   on('turn.complete', async ($, e, next) => {
@@ -305,6 +341,8 @@ export const register: Register = function register(on) {
 
   on('session.end', async ($, e, next) => {
     routesClear()
+    // /clear and resume start a new conversation under a new id, so the previous turn's tier no longer counts for a step-up
+    await update($, lastRouteAtom, () => null)
     await stateFileWrite($, false)
     return next(e)
   })

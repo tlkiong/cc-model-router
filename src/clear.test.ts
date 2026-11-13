@@ -31,6 +31,6 @@ test('historyLines: latest spoken messages first, tool-only rows skipped, each c
 })
 
 test('clearQuestion: tokens and dollars for a priced model, tokens alone otherwise, always a question', async () => {
-  expect(clearQuestion(182_000, 'claude-opus-5-5')).toBe('New task detected. Clearing 182k tokens of old context saves about $0.07 per request, $0.91 when the router changes model. Clear first?')
+  expect(clearQuestion(182_000, 'claude-opus-5-5')).toBe('New task detected. Clearing 182k tokens of old context saves about $0.04 per request, $0.91 when the router changes model. Clear first?')
   expect(clearQuestion(30_000, 'some-model')).toBe('New task detected. Clear 30k tokens of old context first?')
 })

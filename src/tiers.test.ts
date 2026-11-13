@@ -22,9 +22,9 @@ test('tierCap: a ceiling naming a tier the config lacks is skipped', async () =>
   expect(tierCap(config, 'general-purpose', tier('hardest'))?.name).toBe('hardest')
 })
 
-test('contextCost: cache read and cache write of the context at the model input price', async () => {
+test('contextCost: cache read at the model cache read price, cache write at 1.25 times input', async () => {
   const cost = contextCost('opus', 100_000)
-  expect(Math.round((cost?.readUsd ?? 0) * 100)).toBe(4)
+  expect(Math.round((cost?.readUsd ?? 0) * 100)).toBe(2)
   expect(Math.round((cost?.writeUsd ?? 0) * 100)).toBe(50)
   expect(contextCost('unknown-model', 100_000)).toBeUndefined()
 })

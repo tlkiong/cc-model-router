@@ -1,4 +1,4 @@
-import type { AgentSpawnInput, CommandRunInput, On, PromptSubmitInput, SessionContextBreakdown, SessionStartInput, TurnCompleteInput, TurnStepInput } from 'claude-code'
+import type { AgentSpawnInput, CommandRunInput, On, PromptSubmitInput, SessionContextBreakdown, SessionEndInput, SessionStartInput, TurnCompleteInput, TurnStepInput } from 'claude-code'
 import { type Engine, expect, mock, test } from 'claude-code/testing'
 import { CLEAR_NO, CLEAR_YES, TASK_NEW, TASK_SAME } from './clear'
 import { configDefault, configText } from './config'
@@ -25,9 +25,10 @@ type StubOptions = {
   configFile?: string
   env?: Record<string, string>
   store?: Record<string, unknown>
+  failModels?: string[]
 }
 
-const SESSION_MODEL = 'claude-fable-5-1[1m]'
+const SESSION_MODEL = 'claude-fable-5-2[1m]'
 const ENGINE = { plugin: 'engine', tier: 'core' } as const
 
 // every $ call the plugin makes needs an answer, so one stub plays the engine for every scenario
@@ -39,6 +40,7 @@ function engineStub(on: On, options: StubOptions = {}): Seen {
   mock.store(on, options.store ?? { isOnboarded: true })
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('session.id', () => ({ value: 'sess-1' }))
+  on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
   on('session.model', () => ({ value: SESSION_MODEL }))
   on('fs.exists', () => ({ value: options.hasConfigFile ?? true }))
   on('fs.read', () => ({ value: options.configFile ?? configText(configDefault) }))
@@ -87,6 +89,8 @@ function engineStub(on: On, options: StubOptions = {}): Seen {
   on('turn.step', async function* ($, e) {
     seen.stepModels.push(e.model)
     seen.stepEfforts.push(e.effort)
+    // A refused request, such as one past its usage limit, ends with no content and no stop reason
+    if (options.failModels?.includes(e.model)) return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: null, usage: null }
     yield { kind: 'stop' as const, stopReason: 'end_turn' as const, usage: null }
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn' as const, usage: null }
   })
@@ -153,13 +157,13 @@ test('routing on: a trivial turn runs on haiku at low effort, then the route is 
   expect(seen.writes['/home/me/.claude/cc-model-router/sessions/sess-1.json']).toMatch(/"isRouting":true/)
 })
 
-test('routing on: the hardest tier reaches opus at xhigh', async ($, on) => {
+test('routing on: the hardest tier reaches opus at high', async ($, on) => {
   const seen = engineStub(on, { classifyAnswer: 'hardest', store: { isDefault: true, isOnboarded: true } })
   await $.session.start(sessionStart())
   await $.turn.start({ text: 'redesign the auth architecture', turnId: 't2' })
   await stepRun($, stepInput('t2'))
   expect(seen.stepModels).toEqual(['claude-opus-5-5'])
-  expect(seen.stepEfforts).toEqual(['xhigh'])
+  expect(seen.stepEfforts).toEqual(['high'])
 })
 
 test('routing on: the escalate tier reaches fable at high', async ($, on) => {
@@ -167,8 +171,79 @@ test('routing on: the escalate tier reaches fable at high', async ($, on) => {
   await $.session.start(sessionStart())
   await $.turn.start({ text: 'that fix did not work, still broken', turnId: 't2b' })
   await stepRun($, stepInput('t2b'))
-  expect(seen.stepModels).toEqual(['claude-fable-5-1'])
+  expect(seen.stepModels).toEqual(['claude-fable-5-2'])
   expect(seen.stepEfforts).toEqual(['high'])
+})
+
+test('step-up: escalate picked on the next turn runs fable at xhigh', async ($, on) => {
+  const seen = engineStub(on, { classifyAnswer: 'escalate', store: { isDefault: true, isOnboarded: true } })
+  await $.session.start(sessionStart())
+  await $.turn.start({ text: 'that fix did not work, still broken', turnId: 't2f' })
+  await stepRun($, stepInput('t2f'))
+  await $.turn.start({ text: 'still failing after that', turnId: 't2g' })
+  await stepRun($, stepInput('t2g'))
+  expect(seen.stepModels).toEqual(['claude-fable-5-2', 'claude-fable-5-2'])
+  expect(seen.stepEfforts).toEqual(['high', 'xhigh'])
+  expect(seen.writes['/home/me/.claude/cc-model-router/sessions/sess-1.json']).toContain('"effort":"xhigh"')
+})
+
+test('step-up: hardest picked twice runs opus at xhigh', async ($, on) => {
+  const seen = engineStub(on, { classifyAnswer: 'hardest', store: { isDefault: true, isOnboarded: true } })
+  await $.session.start(sessionStart())
+  await $.turn.start({ text: 'redesign the auth architecture', turnId: 't2h' })
+  await stepRun($, stepInput('t2h'))
+  await $.turn.start({ text: 'now the session layer too', turnId: 't2i' })
+  await stepRun($, stepInput('t2i'))
+  expect(seen.stepModels).toEqual(['claude-opus-5-5', 'claude-opus-5-5'])
+  expect(seen.stepEfforts).toEqual(['high', 'xhigh'])
+})
+
+test('step-up: a tier with no stepUp entry keeps its effort when picked twice', async ($, on) => {
+  const seen = engineStub(on, { classifyAnswer: 'moderate', store: { isDefault: true, isOnboarded: true } })
+  await $.session.start(sessionStart())
+  await $.turn.start({ text: 'add a small field', turnId: 't2j' })
+  await stepRun($, stepInput('t2j'))
+  await $.turn.start({ text: 'and its test', turnId: 't2k' })
+  await stepRun($, stepInput('t2k'))
+  expect(seen.stepEfforts).toEqual(['medium', 'medium'])
+})
+
+test('step-up: a /clear (session end, then a new id) starts the streak over', async ($, on) => {
+  const seen = engineStub(on, { classifyAnswer: 'escalate', store: { isDefault: true, isOnboarded: true } })
+  await $.session.start(sessionStart())
+  await $.turn.start({ text: 'that fix did not work, still broken', turnId: 't2l' })
+  await stepRun($, stepInput('t2l'))
+  await $.session.end({ reason: 'clear', sessionId: 'sess-1', resume: { id: 'sess-1' } } as SessionEndInput)
+  await $.turn.start({ text: 'still broken after clearing', turnId: 't2m' })
+  await stepRun($, stepInput('t2m'))
+  expect(seen.stepEfforts).toEqual(['high', 'high'])
+})
+
+test('fallback: a fable step that fails reruns on opus, and later steps skip fable', async ($, on) => {
+  const seen = engineStub(on, { classifyAnswer: 'escalate', failModels: ['claude-fable-5-2'], store: { isDefault: true, isOnboarded: true } })
+  await $.session.start(sessionStart())
+  await $.turn.start({ text: 'that fix did not work, still broken', turnId: 't2c' })
+  await stepRun($, stepInput('t2c'))
+  await stepRun($, { ...stepInput('t2c'), index: 1 })
+  expect(seen.stepModels).toEqual(['claude-fable-5-2', 'claude-opus-5-5', 'claude-opus-5-5'])
+  expect(seen.stepEfforts).toEqual(['high', 'high', 'high'])
+  expect(seen.writes['/home/me/.claude/cc-model-router/sessions/sess-1.json']).toContain('claude-opus-5-5')
+})
+
+test('fallback: a fable session model that fails reruns on opus with routing off', async ($, on) => {
+  const seen = engineStub(on, { failModels: [SESSION_MODEL] })
+  await $.session.start(sessionStart())
+  await $.turn.start({ text: 'anything', turnId: 't2d' })
+  await stepRun($, stepInput('t2d'))
+  expect(seen.stepModels).toEqual([SESSION_MODEL, 'claude-opus-5-5'])
+})
+
+test('fallback: a model with no fallback is never retried', async ($, on) => {
+  const seen = engineStub(on, { classifyAnswer: 'hardest', failModels: ['claude-opus-5-5'], store: { isDefault: true, isOnboarded: true } })
+  await $.session.start(sessionStart())
+  await $.turn.start({ text: 'redesign the auth architecture', turnId: 't2e' })
+  await stepRun($, stepInput('t2e'))
+  expect(seen.stepModels).toEqual(['claude-opus-5-5'])
 })
 
 test('routing on: an unknown tier name leaves the turn alone', async ($, on) => {
@@ -187,7 +262,7 @@ test('subagent: an undecided spawn gets the tier model and its steps get the eff
   expect(spawned.agentId).toBe('agent-1')
   await stepRun($, stepInput('t9', 'agent-1'))
   expect(seen.stepModels).toEqual(['claude-sonnet-5-5'])
-  expect(seen.stepEfforts).toEqual(['high'])
+  expect(seen.stepEfforts).toEqual(['medium'])
 })
 
 test('subagent: an explicit model or a fork is never rerouted', async ($, on) => {
@@ -344,7 +419,7 @@ test('/cc-model-router update-config adds missing keys and keeps the user values
   const seen = engineStub(on, { configFile: oldText })
   await $.session.start(sessionStart())
   const result = await $.command.run(commandInput('cc-model-router', 'update-config'))
-  expect(result.text).toMatch(/config updated, added subagents, newTask with defaults/)
+  expect(result.text).toMatch(/config updated, added stepUp, subagents, fallbacks, newTask with defaults/)
   expect(seen.writes['/home/me/.claude/cc-model-router/config.json.bak']).toBe(oldText)
   const written = JSON.parse(seen.writes['/home/me/.claude/cc-model-router/config.json'] ?? '{}')
   expect(written.classifier).toEqual({ kind: 'auto', model: 'haiku' })
@@ -402,7 +477,7 @@ test('subagent: general-purpose is capped at moderate, other types keep the clas
   await stepRun($, stepInput('t20', 'agent-1'))
   await $.agent.spawn(spawnInput({ subagentType: 'Explore' }))
   expect(seen.spawnModels).toEqual(['claude-sonnet-5-5', 'claude-opus-5-5'])
-  expect(seen.stepEfforts).toEqual(['high'])
+  expect(seen.stepEfforts).toEqual(['medium'])
 })
 
 test('subagent: a general-purpose pick below the ceiling stays cheap', async ($, on) => {
@@ -419,7 +494,7 @@ test('new task: Clear runs /clear, keeps routing on and resends the prompt as th
   expect(result.drop).toMatch(/clearing the old context/)
   await settled(() => seen.submits.length > 0)
   // No route yet, so the price is the session model's (fable)
-  expect(seen.asks).toEqual(['New task detected. Clearing 182k tokens of old context saves about $0.18 per request, $2.27 when the router changes model. Clear first?'])
+  expect(seen.asks).toEqual(['New task detected. Clearing 182k tokens of old context saves about $0.04 per request, $1.82 when the router changes model. Clear first?'])
   expect(seen.commands).toEqual(['clear'])
   expect(seen.submits.map((submit) => [submit.text, submit.origin])).toEqual([['write a haiku about cats', { kind: 'plugin', name: 'cc-model-router', asUser: true }]])
   expect(seen.writes['/home/me/.claude/cc-model-router/sessions/sess-1.json']).toMatch(/"isRouting":true/)
