@@ -6,17 +6,28 @@ export type ClassifierKind = (typeof CLASSIFIER_KINDS)[number]
 
 export type Tier = { name: string; model: string; effort: Effort; criteria: string }
 export type NewTask = { isAsking: boolean; minTokens: number }
-export type Config = { tiers: Tier[]; subagents: Record<string, string>; newTask: NewTask; classifier: { kind: ClassifierKind; model: string } }
+export type Config = {
+  tiers: Tier[]
+  stepUp: Record<string, Effort>
+  subagents: Record<string, string>
+  fallbacks: Record<string, string>
+  newTask: NewTask
+  classifier: { kind: ClassifierKind; model: string }
+}
 
+// Efforts follow Anthropic's per-model starting points (effort docs, 2026-11-13): Sonnet 5.5 medium for well-specified agentic coding,
+// Opus 5.5 xhigh only where a gain is measured, Fable 5.2 high first and xhigh only once high has fallen short
 export const configDefault: Config = {
   tiers: [
     { name: 'trivial', model: 'claude-haiku-5-5', effort: 'low', criteria: 'one-line answers, typo or rename, reading a file, formatting, simple factual question' },
-    { name: 'moderate', model: 'claude-sonnet-5-5', effort: 'high', criteria: 'single-file edit, small feature, straightforward bug, tests for existing code' },
+    { name: 'moderate', model: 'claude-sonnet-5-5', effort: 'medium', criteria: 'single-file edit, small feature, straightforward bug, tests for existing code' },
     { name: 'complex', model: 'claude-opus-5-5', effort: 'medium', criteria: 'multi-file change, debugging across modules, refactor, design decision with known constraints' },
-    { name: 'hardest', model: 'claude-opus-5-5', effort: 'xhigh', criteria: 'architecture, ambiguous spec, security-sensitive work, long autonomous multi-step task' },
-    { name: 'escalate', model: 'claude-fable-5-1', effort: 'high', criteria: 'retry of a fix that already failed, still broken after repeated attempts, flagship-quality writing' },
+    { name: 'hardest', model: 'claude-opus-5-5', effort: 'high', criteria: 'architecture, ambiguous spec, security-sensitive work, long autonomous multi-step task' },
+    { name: 'escalate', model: 'claude-fable-5-2', effort: 'high', criteria: 'retry of a fix that already failed, still broken after repeated attempts, flagship-quality writing' },
   ],
+  stepUp: { escalate: 'xhigh', hardest: 'xhigh' },
   subagents: { 'general-purpose': 'moderate' },
+  fallbacks: { 'claude-fable-5-2': 'claude-opus-5-5' },
   newTask: { isAsking: true, minTokens: 20000 },
   classifier: { kind: 'auto', model: '' },
 }
@@ -92,6 +103,21 @@ export function configParse(text: string): { config: Config | null; errors: stri
     })
   }
 
+  // Like subagents: a missing key keeps the default, which is harmless when the file has no tier by that name
+  let stepUp = configDefault.stepUp
+  if (raw.stepUp !== undefined) {
+    if (!isRecord(raw.stepUp)) {
+      errors.push('stepUp must be an object of tier name to effort')
+    } else {
+      stepUp = {}
+      for (const [tierName, effort] of Object.entries(raw.stepUp)) {
+        if (!names.has(tierName)) errors.push(`stepUp["${tierName}"] must name one of the tiers`)
+        else if (!isEffort(effort)) errors.push(`stepUp["${tierName}"] must be one of ${EFFORTS.join(', ')}`)
+        else stepUp[tierName] = effort
+      }
+    }
+  }
+
   // A config written before this key existed keeps the default ceilings; one naming a tier the file lacks is skipped when applied
   let subagents = configDefault.subagents
   if (raw.subagents !== undefined) {
@@ -102,6 +128,19 @@ export function configParse(text: string): { config: Config | null; errors: stri
       for (const [agentType, tierName] of Object.entries(raw.subagents)) {
         if (typeof tierName === 'string' && names.has(tierName)) subagents[agentType] = tierName
         else errors.push(`subagents["${agentType}"] must name one of the tiers`)
+      }
+    }
+  }
+
+  let fallbacks = configDefault.fallbacks
+  if (raw.fallbacks !== undefined) {
+    if (!isRecord(raw.fallbacks)) {
+      errors.push('fallbacks must be an object')
+    } else {
+      fallbacks = {}
+      for (const [model, fallback] of Object.entries(raw.fallbacks)) {
+        if (isNonEmptyString(fallback)) fallbacks[model] = fallback
+        else errors.push(`fallbacks["${model}"] must be a non-empty string`)
       }
     }
   }
@@ -134,5 +173,5 @@ export function configParse(text: string): { config: Config | null; errors: stri
   }
 
   if (errors.length > 0) return { config: null, errors }
-  return { config: { tiers, subagents, newTask, classifier }, errors: [] }
+  return { config: { tiers, stepUp, subagents, fallbacks, newTask, classifier }, errors: [] }
 }

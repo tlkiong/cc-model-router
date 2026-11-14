@@ -19,6 +19,12 @@ export function routeBuild(tier: Tier): Route {
   return { tier: tier.name, model: modelIdResolve(tier.model), effort: tier.effort }
 }
 
+// The same tier picked on the very next turn means its first pass did not settle the work, so it reruns at the stepped-up effort
+export function routeStepUp(route: Route, previous: Route | null, stepUp: Record<string, Effort>): Route {
+  const effort = stepUp[route.tier]
+  return effort && previous?.tier === route.tier ? { ...route, effort } : route
+}
+
 export function routeSet(key: RouteKey, route: Route): void {
   routes.set(routeKeyText(key), route)
 }
@@ -31,8 +37,20 @@ export function routeDrop(key: RouteKey): void {
   routes.delete(routeKeyText(key))
 }
 
+// A model that failed once, say at its usage limit, stays skipped until the session ends, so later steps go straight to its fallback
+const failedModels = new Set<string>()
+
+export function modelFailedMark(model: string): void {
+  failedModels.add(model)
+}
+
+export function isModelFailed(model: string): boolean {
+  return failedModels.has(model)
+}
+
 export function routesClear(): void {
   routes.clear()
+  failedModels.clear()
 }
 
 export function stateFilePath(home: string, sessionId: string): string {

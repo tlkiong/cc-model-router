@@ -22,11 +22,12 @@ Answer `y` to add the marketplace, pick the user scope, done. On the next start 
 3  claude-haiku-5-5
 4  claude-sonnet-5-5
 5  claude-opus-5-5
-6  claude-fable-5-1
+6  claude-fable-5-2
 ```
 
-- Option 2 turns routing on and makes it the default for new sessions.
-- Any other option sets that session model and turns routing off, as does `/model <name>` typed with a name.
+- Routing is on in every session once the mod is installed, including after `/clear`. There is nothing to enable.
+- Option 2 turns it back on during a session.
+- Any other option sets that session model and turns routing off for that session only, as does `/model <name>` typed with a name. A new session or a `/clear` turns it on again.
 - `/cc-model-router on | off | status | config | update-config [--force] | onboard` does the same from the prompt and prints the live route, the classifier in use, and the tier table.
 
 `/cc-model-router status` shows the live route. The status line recipe below shows the router's name in place of the model.
@@ -39,12 +40,14 @@ Tiers live in `~/.claude/cc-model-router/config.json`, written with these defaul
 {
   "tiers": [
     { "name": "trivial",  "model": "claude-haiku-5-5",  "effort": "low",    "criteria": "one-line answers, typo or rename, reading a file, formatting, simple factual question" },
-    { "name": "moderate", "model": "claude-sonnet-5-5", "effort": "high",   "criteria": "single-file edit, small feature, straightforward bug, tests for existing code" },
+    { "name": "moderate", "model": "claude-sonnet-5-5", "effort": "medium", "criteria": "single-file edit, small feature, straightforward bug, tests for existing code" },
     { "name": "complex",  "model": "claude-opus-5-5",   "effort": "medium", "criteria": "multi-file change, debugging across modules, refactor, design decision with known constraints" },
-    { "name": "hardest",  "model": "claude-opus-5-5",   "effort": "xhigh",  "criteria": "architecture, ambiguous spec, security-sensitive work, long autonomous multi-step task" },
-    { "name": "escalate", "model": "claude-fable-5-1",  "effort": "high",   "criteria": "retry of a fix that already failed, still broken after repeated attempts, flagship-quality writing" }
+    { "name": "hardest",  "model": "claude-opus-5-5",   "effort": "high",   "criteria": "architecture, ambiguous spec, security-sensitive work, long autonomous multi-step task" },
+    { "name": "escalate", "model": "claude-fable-5-2",  "effort": "high",   "criteria": "retry of a fix that already failed, still broken after repeated attempts, flagship-quality writing" }
   ],
+  "stepUp": { "escalate": "xhigh", "hardest": "xhigh" },
   "subagents": { "general-purpose": "moderate" },
+  "fallbacks": { "claude-fable-5-2": "claude-opus-5-5" },
   "newTask": { "isAsking": true, "minTokens": 20000 },
   "classifier": { "kind": "auto", "model": "" }
 }
@@ -56,7 +59,9 @@ Tiers live in `~/.claude/cc-model-router/config.json`, written with these defaul
 | `tiers[].model` | any Claude model id or alias (`haiku`, `sonnet`, `opus`, `fable`), `[1m]` suffix allowed |
 | `tiers[].effort` | `low`, `medium`, `high`, `xhigh`, `max` |
 | `tiers[].criteria` | one line of what the tier covers; the classifier reads it verbatim |
+| `stepUp` | tier name to effort: a tier picked again on the very next turn reruns at this effort. `{}` turns step-up off |
 | `subagents` | agent type to tier name: the highest tier a spawn of that type runs on. `{}` turns ceilings off |
+| `fallbacks` | model to model: where a step goes when its model fails before replying, such as at its usage limit. `{}` turns fallbacks off |
 | `newTask.isAsking` | `true` offers a `/clear` when a prompt starts a new task, `false` never asks |
 | `newTask.minTokens` | conversation tokens below which the new-task check is skipped |
 | `classifier.kind` | `auto` (Jev when `TYPESAFE_API_KEY` is set, else Claude), `jev`, `claude` |
@@ -64,7 +69,7 @@ Tiers live in `~/.claude/cc-model-router/config.json`, written with these defaul
 
 A file with errors keeps the last good config in use and `/cc-model-router config` lists each error.
 
-Price per million tokens, input/output, as shown in the picker: Haiku 5.5 $0.10/$0.50, Sonnet 5.5 $2/$10, Opus 5.5 $4/$20, Fable 5.1 $10/$50.
+Price per million tokens, input/output, as shown in the picker: Haiku 5.5 $0.10/$0.50, Sonnet 5.5 $2/$10, Opus 5.5 $4/$20, Fable 5.2 $8/$40.
 
 ## Classifier
 
@@ -72,6 +77,14 @@ Each prompt is classified once per turn, and once per subagent spawn.
 
 - **Jev** (typesafe.ai): set `TYPESAFE_API_KEY` in your shell, or in the `env` block of `~/.claude/settings.json`. One `choice` question with your tier criteria, one retry on 429 or 529, then fallback to Claude.
 - **Claude**: the engine's small fast model through `$.model.classify`, no key needed.
+
+## Step-up
+
+Anthropic's advice for Claude Fable 5.2 is to start at `high` and use `xhigh` only where `high` falls short. So the `escalate` tier runs Fable 5.2 at `high`, and when the next turn is classified `escalate` again (the fix still failed), it runs at `xhigh`. It stays at `xhigh` while turns keep landing on `escalate`; any other tier ends the streak. `hardest` steps up the same way, from Opus 5.5 `high` to `xhigh`. A `/clear` or a resume starts a new conversation, so the streak starts over. Default efforts follow the per-model starting points on Anthropic's effort page: Haiku 5.5 `low` for simple work, Sonnet 5.5 `medium` for well-specified agentic coding, Opus 5.5 `medium`, with `high` for the hardest tier, since `xhigh` is for work where a gain was measured.
+
+## Fallbacks
+
+A step whose model fails before any reply, at its usage limit or because it will not load, runs again on the model `fallbacks` names for it. By default Fable falls back to Opus at the same effort. The failed model is then skipped for the rest of the session, so later steps go straight to the fallback and the status line shows it. This covers routed turns, subagents and a session model picked by hand, with routing on or off. An interrupted step is never retried, and a fallback that fails too ends the step as the engine would.
 
 ## Subagents
 

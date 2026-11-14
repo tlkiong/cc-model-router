@@ -46,6 +46,20 @@ test('config: a file without subagents or newTask gets the defaults', async () =
   expect(errors).toEqual([])
   expect(config?.subagents).toEqual({ 'general-purpose': 'moderate' })
   expect(config?.newTask).toEqual({ isAsking: true, minTokens: 20000 })
+  expect(config?.fallbacks).toEqual({ 'claude-fable-5-2': 'claude-opus-5-5' })
+  expect(config?.stepUp).toEqual({ escalate: 'xhigh', hardest: 'xhigh' })
+})
+
+test('config: stepUp must map a tier name to an effort, and {} turns it off', async () => {
+  expect(configParse(JSON.stringify({ tiers: configDefault.tiers, stepUp: {} })).config?.stepUp).toEqual({})
+  expect(configParse(JSON.stringify({ tiers: configDefault.tiers, stepUp: { gone: 'xhigh' } })).errors).toEqual(['stepUp["gone"] must name one of the tiers'])
+  expect(configParse(JSON.stringify({ tiers: configDefault.tiers, stepUp: { escalate: 'huge' } })).errors).toEqual(['stepUp["escalate"] must be one of low, medium, high, xhigh, max'])
+})
+
+test('config: fallbacks must map models to model names, and {} turns them off', async () => {
+  expect(configParse(JSON.stringify({ tiers: configDefault.tiers, fallbacks: {} })).config?.fallbacks).toEqual({})
+  expect(configParse(JSON.stringify({ tiers: configDefault.tiers, fallbacks: [] })).errors).toEqual(['fallbacks must be an object'])
+  expect(configParse(JSON.stringify({ tiers: configDefault.tiers, fallbacks: { fable: '' } })).errors).toEqual(['fallbacks["fable"] must be a non-empty string'])
 })
 
 test('config: a ceiling must name a tier and newTask fields are typed', async () => {
@@ -66,15 +80,20 @@ test('config: an empty subagents object turns the ceilings off', async () => {
 test('config: merge adds only the keys the file lacks and keeps user order', async () => {
   const text = '{\n  "classifier": { "kind": "auto", "model": "haiku" },\n  "tiers": []\n}\n'
   const { text: merged, added, errors } = configMerge(text)
-  expect(added).toEqual(['subagents', 'newTask'])
-  expect(Object.keys(JSON.parse(merged))).toEqual(['classifier', 'tiers', 'subagents', 'newTask'])
-  expect(errors).toEqual(['tiers must be a non-empty array', 'subagents["general-purpose"] must name one of the tiers'])
+  expect(added).toEqual(['stepUp', 'subagents', 'fallbacks', 'newTask'])
+  expect(Object.keys(JSON.parse(merged))).toEqual(['classifier', 'tiers', 'stepUp', 'subagents', 'fallbacks', 'newTask'])
+  expect(errors).toEqual([
+    'tiers must be a non-empty array',
+    'stepUp["escalate"] must name one of the tiers',
+    'stepUp["hardest"] must name one of the tiers',
+    'subagents["general-purpose"] must name one of the tiers',
+  ])
 })
 
 test('config: merge keeps an emptied subagents object and reports a file it cannot read', async () => {
   const text = JSON.stringify({ tiers: configDefault.tiers, subagents: {}, classifier: configDefault.classifier })
   const merged = configMerge(text)
-  expect(merged.added).toEqual(['newTask'])
+  expect(merged.added).toEqual(['stepUp', 'fallbacks', 'newTask'])
   expect(merged.errors).toEqual([])
   expect(JSON.parse(merged.text).subagents).toEqual({})
   expect(configMerge('nope').errors[0]).toMatch(/not valid JSON/)
