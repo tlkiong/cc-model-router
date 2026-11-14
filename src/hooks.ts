@@ -1,5 +1,5 @@
 // The engine follows $ only inside the file that declares a hook, so every $ call lives here and the other modules stay pure
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, TurnStepChunk } from 'claude-code'
 import { atom, read, update } from 'claude-code'
 import { type Choice, type ClassifierLive, classifierLabel, classifierPick, claudePromptBuild, tierChoice } from './classify'
 import { CLEAR_HEADER, CLEAR_NO, CLEAR_YES, clearQuestion, historyLines, isNewTaskCheckable, messagesTokens, TASK_NEW, taskChoice, taskStateBuild } from './clear'
@@ -7,13 +7,13 @@ import { type Config, configDefault, configMerge, configParse, configPath, confi
 import { JEV_KEY_ENV, JEV_URL, jevHeaders, jevIsRetryable, jevRequestBuild, jevResponseParse } from './jev'
 import { PICKER_PANE, pickerHeight, pickerRows, pickerTree } from './model-picker'
 import { ONBOARDING_PANE, onboardingHeight, onboardingTree } from './onboarding'
-import { LABEL, PLUGIN, type Route, routeBuild, routeDrop, routeGet, routeSet, routesClear, stateFilePath, stateFileText } from './routing'
-import { tierCap, tierFind, tierModels, tierTableLines } from './tiers'
+import { isModelFailed, LABEL, modelFailedMark, PLUGIN, type Route, routeBuild, routeDrop, routeGet, routeSet, routeStepUp, routesClear, stateFilePath, stateFileText } from './routing'
+import { fallbackFind, tierCap, tierFind, tierModels, tierTableLines } from './tiers'
 
 const COMMAND = PLUGIN
 const COMMAND_ARGS = 'on | off | status | config | update-config [--force] | onboard'
-const STORE_IS_DEFAULT = 'isDefault'
 const STORE_IS_ONBOARDED = 'isOnboarded'
+const STORE_RESUME_AFTER_CLEAR = 'resumeAfterClear'
 
 // The engine's scan reads atoms only from the hooks file, with literal plugin and key
 const isRoutingAtom = atom({ plugin: 'cc-model-router', key: 'isRouting' } as const, false)
@@ -136,9 +136,8 @@ async function stateFileWrite($: EngineInterface, isRouting: boolean): Promise<v
   }
 }
 
-async function routingSet($: EngineInterface, isOn: boolean, options: { isDefault?: boolean } = {}): Promise<void> {
+async function routingSet($: EngineInterface, isOn: boolean): Promise<void> {
   await update($, isRoutingAtom, () => isOn)
-  if (options.isDefault !== undefined) await $.store.set(STORE_IS_DEFAULT, options.isDefault)
   await stateFileWrite($, isOn)
 }
 
@@ -151,10 +150,6 @@ async function isRoutingRead($: EngineInterface): Promise<boolean> {
   return read($, isRoutingAtom)
 }
 
-async function isDefaultRead($: EngineInterface): Promise<boolean> {
-  return (await $.store.get(STORE_IS_DEFAULT)) === true
-}
-
 async function onboardingOpen($: EngineInterface): Promise<void> {
   // Marked before the pane shows, so an Esc does not bring it back every session
   await $.store.set(STORE_IS_ONBOARDED, true)
@@ -162,7 +157,7 @@ async function onboardingOpen($: EngineInterface): Promise<void> {
 }
 
 async function routerEnable($: EngineInterface, paneId: string): Promise<void> {
-  await routingSet($, true, { isDefault: true })
+  await routingSet($, true)
   await $.ui.close({ id: paneId })
   $.ui.toast(`${LABEL} on`)
 }
@@ -176,7 +171,7 @@ async function statusReport($: EngineInterface): Promise<string> {
   const config = await configLoad($)
   const route = await read($, lastRouteAtom)
   const lines = [
-    `${LABEL}: ${(await isRoutingRead($)) ? 'on' : 'off'}${(await isDefaultRead($)) ? ' (default for new sessions)' : ''}`,
+    `${LABEL}: ${(await isRoutingRead($)) ? 'on' : 'off for this session'}`,
     `last route: ${route ? `${route.tier} -> ${route.model} / ${route.effort}` : 'none yet'}`,
     `classifier: ${classifierLabel(await classifierResolve($, config), config)}`,
     '',
@@ -223,21 +218,29 @@ export const register: Register = function register(on) {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: COMMAND, description: `${LABEL}: ${COMMAND_ARGS}`, argumentHint: COMMAND_ARGS })
     await configLoad($)
-    await routingSet($, await isDefaultRead($))
+    // Installed means on: every new session starts routed, and only a pick made during that session turns it off
+    await routingSet($, true)
     const isOnboarded = (await $.store.get(STORE_IS_ONBOARDED)) === true
     if (!isOnboarded && e.surface !== null) await onboardingOpen($)
     return next(e)
   })
 
   on('turn.start', async ($, e, next) => {
+    // A typed /clear fires session.end but no session.start, so nothing else turns routing back on for the new conversation
+    if ((await $.store.get(STORE_RESUME_AFTER_CLEAR)) === true) {
+      await $.store.set(STORE_RESUME_AFTER_CLEAR, false)
+      await routingSet($, true)
+    }
     if (e.text.trim().length === 0 || !(await isRoutingRead($))) return next(e)
     try {
-      const tier = await tierClassify($, await configLoad($), e.text)
+      const config = await configLoad($)
+      const tier = await tierClassify($, config, e.text)
       if (!tier) {
         $.ui.log(`${PLUGIN}: no tier matched, this turn stays on the session model`)
         return next(e)
       }
-      const route = routeBuild(tier)
+      const route = routeStepUp(routeBuild(tier), await read($, lastRouteAtom), config.stepUp)
+      if (route.effort !== tier.effort) $.ui.log(`${PLUGIN}: ${tier.name} picked again, stepping up to ${route.model} / ${route.effort}`)
       routeSet({ turnId: e.turnId }, route)
       await routeApply($, route)
     } catch (error) {
@@ -283,9 +286,43 @@ export const register: Register = function register(on) {
   }).catch(($, e, next) => next(e))
 
   on('turn.step', async function* ($, e, next) {
-    const route = routeGet(e.agentId ? { agentId: e.agentId } : { turnId: e.turnId })
-    if (!route) return yield* next(e)
-    return yield* next({ ...e, model: route.model, effort: route.effort })
+    const key = e.agentId ? { agentId: e.agentId } : { turnId: e.turnId }
+    const route = routeGet(key)
+    const step = route ? { ...e, model: route.model, effort: route.effort } : e
+    // The last good config is read, not the file: a step runs many times a turn and turn.start already loaded it
+    const fallback = fallbackFind(configLastGood, step.model)
+    if (!fallback) return yield* next(step)
+    if (isModelFailed(step.model)) return yield* next({ ...step, model: fallback })
+    // Engine chunks wait for the first content chunk, so a request refused before any content leaves nothing behind for the retry to sit beside
+    const held: TurnStepChunk[] = []
+    let isLive = false
+    const stream = next(step)
+    for await (const chunk of stream) {
+      if (isLive) {
+        yield chunk
+      } else if (chunk.kind === 'engine') {
+        held.push(chunk)
+      } else {
+        isLive = true
+        yield* held
+        yield chunk
+      }
+    }
+    const result = await stream.result
+    // A null stop reason with no content is a request that failed before a reply; an interrupt also ends that way and must not retry
+    if (isLive || result.stopReason !== null || next.signal.aborted) {
+      if (!isLive) yield* held
+      return result
+    }
+    modelFailedMark(step.model)
+    $.ui.log(`${PLUGIN}: ${step.model} failed (usage limit or not available), retrying on ${fallback} for the rest of the session`)
+    if (route) {
+      const fallbackRoute = { ...route, model: fallback }
+      routeSet(key, fallbackRoute)
+      // Only a main-thread route feeds the status line, as on turn.start
+      if (!e.agentId) await routeApply($, fallbackRoute)
+    }
+    return yield* next({ ...step, model: fallback })
   })
 
   on('turn.complete', async ($, e, next) => {
@@ -304,7 +341,10 @@ export const register: Register = function register(on) {
   })
 
   on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear') await $.store.set(STORE_RESUME_AFTER_CLEAR, true)
     routesClear()
+    // /clear and resume start a new conversation under a new id, so the previous turn's tier no longer counts for a step-up
+    await update($, lastRouteAtom, () => null)
     await stateFileWrite($, false)
     return next(e)
   })
@@ -313,11 +353,11 @@ export const register: Register = function register(on) {
     const [verb = '', flag = ''] = e.args.trim().split(/\s+/)
     switch (verb) {
       case 'on':
-        await routingSet($, true, { isDefault: true })
-        return { text: `${LABEL} on, and the default for new sessions.` }
+        await routingSet($, true)
+        return { text: `${LABEL} on.` }
       case 'off':
-        await routingSet($, false, { isDefault: false })
-        return { text: `${LABEL} off. /model picks the session model again.` }
+        await routingSet($, false)
+        return { text: `${LABEL} off for this session, back on in the next session or after /clear. /model picks the session model.` }
       case 'config':
         return { text: await configReport($) }
       case 'update-config':
@@ -349,7 +389,6 @@ export const register: Register = function register(on) {
       sessionModel: await $.session.model(),
       tierModels: tierModels(config),
       isRouting: await isRoutingRead($),
-      isDefault: await isDefaultRead($),
       onDefault: () => sessionModelPick($, 'default'),
       onRouter: () => routerEnable($, PICKER_PANE),
       onModel: (model) => sessionModelPick($, model),
@@ -373,7 +412,6 @@ export const register: Register = function register(on) {
         live === 'jev' ? `classifier: ${label}, ${JEV_KEY_ENV} found` : `classifier: ${label}. Set ${JEV_KEY_ENV} in your shell or in the env block of ~/.claude/settings.json to use Jev.`,
       configLine: `config: ${configPath(home)} (edits apply on the next turn)`,
       stateLine: `status line state: ${stateFilePath(home, '<session_id>')}`,
-      onEnable: () => routerEnable($, ONBOARDING_PANE),
       onDismiss: () => $.ui.close({ id: ONBOARDING_PANE }),
     })
   })

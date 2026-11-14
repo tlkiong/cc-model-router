@@ -1,26 +1,28 @@
 import type { Config, Tier } from './config'
 
-// USD per million tokens, input then output, from the Claude pricing table dated 2026-10-06; display only
-const PRICES: Record<string, [number, number]> = {
-  'claude-haiku-5-5': [0.1, 0.5],
-  'claude-haiku-4-5': [1, 5],
-  'claude-sonnet-5-5': [2, 10],
-  'claude-sonnet-5': [2, 10],
-  'claude-sonnet-4-6': [3, 15],
-  'claude-opus-5-5': [4, 20],
-  'claude-opus-5': [5, 25],
-  'claude-opus-4-8': [5, 25],
-  'claude-opus-4-7': [5, 25],
-  'claude-opus-4-6': [5, 25],
-  'claude-fable-5-1': [10, 50],
-  'claude-fable-5': [10, 50],
+// USD per million tokens: input, output, cache read. From the Claude pricing page on 2026-11-13; display only.
+// Haiku 5.5 is the up-to-100K-prompt rate; prompts over 100K bill at five times it.
+const PRICES: Record<string, [number, number, number]> = {
+  'claude-haiku-5-5': [0.1, 0.5, 0.01],
+  'claude-haiku-4-5': [1, 5, 0.1],
+  'claude-sonnet-5-5': [2, 10, 0.1],
+  'claude-sonnet-5': [2, 10, 0.2],
+  'claude-sonnet-4-6': [3, 15, 0.3],
+  'claude-opus-5-5': [4, 20, 0.2],
+  'claude-opus-5': [5, 25, 0.5],
+  'claude-opus-4-8': [5, 25, 0.5],
+  'claude-opus-4-7': [5, 25, 0.5],
+  'claude-opus-4-6': [5, 25, 0.5],
+  'claude-fable-5-2': [8, 40, 0.2],
+  'claude-fable-5-1': [10, 50, 0.25],
+  'claude-fable-5': [10, 50, 1],
 }
 
 const ALIASES: Record<string, string> = {
   haiku: 'claude-haiku-5-5',
   sonnet: 'claude-sonnet-5-5',
   opus: 'claude-opus-5-5',
-  fable: 'claude-fable-5-1',
+  fable: 'claude-fable-5-2',
 }
 
 export function modelIdNormalize(model: string): string {
@@ -34,6 +36,12 @@ export function modelIdResolve(model: string): string {
 
 function usdText(amount: number): string {
   return Number.isInteger(amount) ? `$${amount}` : `$${amount.toFixed(2)}`
+}
+
+export function fallbackFind(config: Config, model: string): string | undefined {
+  // Keys may be aliases or carry [1m], so both sides compare as bare ids
+  const entry = Object.entries(config.fallbacks).find(([from]) => modelIdNormalize(from) === modelIdNormalize(model))
+  return entry ? modelIdResolve(entry[1]) : undefined
 }
 
 export function priceText(model: string): string {
@@ -67,15 +75,14 @@ export function tierTableLines(config: Config): string[] {
   })
 }
 
-// A request re-reads the cached context at a tenth of the input price; a model change writes all of it to a new cache at 1.25 times it (5-minute TTL)
-const CACHE_READ_RATE = 0.1
+// A request re-reads the cached context at the model's cache read price; a model change writes all of it to a new cache at 1.25 times the input price (5-minute TTL)
 const CACHE_WRITE_RATE = 1.25
 
 export function contextCost(model: string, tokens: number): { readUsd: number; writeUsd: number } | undefined {
   const price = PRICES[modelIdNormalize(model)]
   if (!price) return undefined
-  const inputUsd = (tokens / 1_000_000) * price[0]
-  return { readUsd: inputUsd * CACHE_READ_RATE, writeUsd: inputUsd * CACHE_WRITE_RATE }
+  const millions = tokens / 1_000_000
+  return { readUsd: millions * price[2], writeUsd: millions * price[0] * CACHE_WRITE_RATE }
 }
 
 export function usdEstimateText(amount: number): string {

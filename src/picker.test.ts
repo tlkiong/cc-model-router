@@ -4,35 +4,33 @@ import { pickerRows } from './model-picker'
 import { stateFileText } from './routing'
 import { modelIdNormalize, modelIdResolve, priceText, tierTableLines } from './tiers'
 
-const MODELS = ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-1']
+const MODELS = ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'claude-fable-5-2']
 const noop = () => undefined
 
 test('picker: router row is option 2 and reads selected while routing', async () => {
-  const rows = pickerRows({ sessionModel: 'claude-fable-5-1[1m]', tierModels: MODELS, isRouting: true, isDefault: true, onDefault: noop, onRouter: noop, onModel: noop })
+  const rows = pickerRows({ sessionModel: 'claude-fable-5-2[1m]', tierModels: MODELS, isRouting: true, onDefault: noop, onRouter: noop, onModel: noop })
   expect(rows[1]?.label).toBe('CC Model Router')
   expect(rows[1]?.isSelected).toBe(true)
-  expect(rows[1]?.isDefault).toBe(true)
   expect(rows.filter((row) => row.isSelected)).toHaveLength(1)
   expect(rows).toHaveLength(2 + MODELS.length)
 })
 
 test('picker: a manual pick marks that tier model, not Default', async () => {
-  const rows = pickerRows({ sessionModel: 'claude-opus-5-5', tierModels: MODELS, isRouting: false, isDefault: true, onDefault: noop, onRouter: noop, onModel: noop })
+  const rows = pickerRows({ sessionModel: 'claude-opus-5-5', tierModels: MODELS, isRouting: false, onDefault: noop, onRouter: noop, onModel: noop })
   expect(rows[0]?.isSelected).toBe(false)
   expect(rows[1]?.isSelected).toBe(false)
-  expect(rows[1]?.isDefault).toBe(true)
   expect(rows.find((row) => row.key === 'claude-opus-5-5')?.isSelected).toBe(true)
 })
 
 test('picker: a session model outside the tiers marks Default', async () => {
-  const rows = pickerRows({ sessionModel: 'claude-sonnet-4-6', tierModels: MODELS, isRouting: false, isDefault: false, onDefault: noop, onRouter: noop, onModel: noop })
+  const rows = pickerRows({ sessionModel: 'claude-sonnet-4-6', tierModels: MODELS, isRouting: false, onDefault: noop, onRouter: noop, onModel: noop })
   expect(rows[0]?.isSelected).toBe(true)
   expect(rows[0]?.label).toBe('Default')
   expect(rows.filter((row) => row.isSelected)).toHaveLength(1)
 })
 
 test('tiers: aliases and the 1m suffix normalise to one id', async () => {
-  expect(modelIdNormalize('claude-fable-5-1[1m]')).toBe('claude-fable-5-1')
+  expect(modelIdNormalize('claude-fable-5-2[1m]')).toBe('claude-fable-5-2')
   expect(modelIdNormalize('opus')).toBe('claude-opus-5-5')
   expect(modelIdResolve('opus[1m]')).toBe('claude-opus-5-5[1m]')
   expect(modelIdResolve('claude-haiku-5-5')).toBe('claude-haiku-5-5')
