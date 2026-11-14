@@ -136,9 +136,18 @@ function commandInput(command: string, args = ''): CommandRunInput {
   return { command, args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 80 } }
 }
 
-test('routing off: a turn keeps the session model', async ($, on) => {
+test('routing on from the first session, with no setup: a turn is routed', async ($, on) => {
+  const seen = engineStub(on, { classifyAnswer: 'trivial', store: {} })
+  await $.session.start(sessionStart())
+  await $.turn.start({ text: 'fix typo', turnId: 't0' })
+  await stepRun($, stepInput('t0'))
+  expect(seen.stepModels).toEqual(['claude-haiku-5-5'])
+})
+
+test('routing off for the session: a turn keeps the session model', async ($, on) => {
   const seen = engineStub(on, { store: {} })
   await $.session.start(sessionStart())
+  await $.command.run(commandInput('cc-model-router', 'off'))
   await $.turn.start({ text: 'fix the typo', turnId: 't1' })
   await stepRun($, stepInput('t1'))
   expect(seen.stepModels).toEqual([SESSION_MODEL])
@@ -146,7 +155,7 @@ test('routing off: a turn keeps the session model', async ($, on) => {
 })
 
 test('routing on: a trivial turn runs on haiku at low effort, then the route is dropped', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'trivial', store: { isDefault: true, isOnboarded: true } })
+  const seen = engineStub(on, { classifyAnswer: 'trivial', store: { isOnboarded: true } })
   await $.session.start(sessionStart('terminal'))
   await $.turn.start({ text: 'fix the typo', turnId: 't1' })
   await stepRun($, stepInput('t1'))
@@ -158,7 +167,7 @@ test('routing on: a trivial turn runs on haiku at low effort, then the route is 
 })
 
 test('routing on: the hardest tier reaches opus at high', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'hardest', store: { isDefault: true, isOnboarded: true } })
+  const seen = engineStub(on, { classifyAnswer: 'hardest', store: { isOnboarded: true } })
   await $.session.start(sessionStart())
   await $.turn.start({ text: 'redesign the auth architecture', turnId: 't2' })
   await stepRun($, stepInput('t2'))
@@ -167,7 +176,7 @@ test('routing on: the hardest tier reaches opus at high', async ($, on) => {
 })
 
 test('routing on: the escalate tier reaches fable at high', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'escalate', store: { isDefault: true, isOnboarded: true } })
+  const seen = engineStub(on, { classifyAnswer: 'escalate', store: { isOnboarded: true } })
   await $.session.start(sessionStart())
   await $.turn.start({ text: 'that fix did not work, still broken', turnId: 't2b' })
   await stepRun($, stepInput('t2b'))
@@ -176,7 +185,7 @@ test('routing on: the escalate tier reaches fable at high', async ($, on) => {
 })
 
 test('step-up: escalate picked on the next turn runs fable at xhigh', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'escalate', store: { isDefault: true, isOnboarded: true } })
+  const seen = engineStub(on, { classifyAnswer: 'escalate', store: { isOnboarded: true } })
   await $.session.start(sessionStart())
   await $.turn.start({ text: 'that fix did not work, still broken', turnId: 't2f' })
   await stepRun($, stepInput('t2f'))
@@ -188,7 +197,7 @@ test('step-up: escalate picked on the next turn runs fable at xhigh', async ($, 
 })
 
 test('step-up: hardest picked twice runs opus at xhigh', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'hardest', store: { isDefault: true, isOnboarded: true } })
+  const seen = engineStub(on, { classifyAnswer: 'hardest', store: { isOnboarded: true } })
   await $.session.start(sessionStart())
   await $.turn.start({ text: 'redesign the auth architecture', turnId: 't2h' })
   await stepRun($, stepInput('t2h'))
@@ -199,7 +208,7 @@ test('step-up: hardest picked twice runs opus at xhigh', async ($, on) => {
 })
 
 test('step-up: a tier with no stepUp entry keeps its effort when picked twice', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'moderate', store: { isDefault: true, isOnboarded: true } })
+  const seen = engineStub(on, { classifyAnswer: 'moderate', store: { isOnboarded: true } })
   await $.session.start(sessionStart())
   await $.turn.start({ text: 'add a small field', turnId: 't2j' })
   await stepRun($, stepInput('t2j'))
@@ -210,7 +219,7 @@ test('step-up: a tier with no stepUp entry keeps its effort when picked twice', 
 
 // The real engine drops the routing switch across a typed /clear, which `off` stands in for: only the remembered flag can turn it back on
 test('/clear: routing on before the clear is put back on the next turn', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'complex', store: { isDefault: true, isOnboarded: true } })
+  const seen = engineStub(on, { classifyAnswer: 'complex', store: { isOnboarded: true } })
   await $.session.start(sessionStart())
   await $.session.end({ reason: 'clear', sessionId: 'sess-1', resume: { id: 'sess-1' } } as SessionEndInput)
   await $.command.run(commandInput('cc-model-router', 'off'))
@@ -220,18 +229,18 @@ test('/clear: routing on before the clear is put back on the next turn', async (
   expect(seen.stepEfforts).toEqual(['medium'])
 })
 
-test('/clear: routing already off, or a resume, leaves routing off', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'complex', store: { isDefault: true, isOnboarded: true } })
+test('/clear: routing turned off during the session is on again afterwards', async ($, on) => {
+  const seen = engineStub(on, { classifyAnswer: 'complex', store: { isOnboarded: true } })
   await $.session.start(sessionStart())
   await $.command.run(commandInput('cc-model-router', 'off'))
   await $.session.end({ reason: 'clear', sessionId: 'sess-1', resume: { id: 'sess-1' } } as SessionEndInput)
   await $.turn.start({ text: 'refactor the auth module', turnId: 't3b' })
   await stepRun($, stepInput('t3b'))
-  expect(seen.stepModels).toEqual([SESSION_MODEL])
+  expect(seen.stepModels).toEqual(['claude-opus-5-5'])
 })
 
 test('step-up: a /clear (session end, then a new id) starts the streak over', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'escalate', store: { isDefault: true, isOnboarded: true } })
+  const seen = engineStub(on, { classifyAnswer: 'escalate', store: { isOnboarded: true } })
   await $.session.start(sessionStart())
   await $.turn.start({ text: 'that fix did not work, still broken', turnId: 't2l' })
   await stepRun($, stepInput('t2l'))
@@ -242,7 +251,7 @@ test('step-up: a /clear (session end, then a new id) starts the streak over', as
 })
 
 test('fallback: a fable step that fails reruns on opus, and later steps skip fable', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'escalate', failModels: ['claude-fable-5-2'], store: { isDefault: true, isOnboarded: true } })
+  const seen = engineStub(on, { classifyAnswer: 'escalate', failModels: ['claude-fable-5-2'], store: { isOnboarded: true } })
   await $.session.start(sessionStart())
   await $.turn.start({ text: 'that fix did not work, still broken', turnId: 't2c' })
   await stepRun($, stepInput('t2c'))
@@ -255,13 +264,14 @@ test('fallback: a fable step that fails reruns on opus, and later steps skip fab
 test('fallback: a fable session model that fails reruns on opus with routing off', async ($, on) => {
   const seen = engineStub(on, { failModels: [SESSION_MODEL] })
   await $.session.start(sessionStart())
+  await $.command.run(commandInput('cc-model-router', 'off'))
   await $.turn.start({ text: 'anything', turnId: 't2d' })
   await stepRun($, stepInput('t2d'))
   expect(seen.stepModels).toEqual([SESSION_MODEL, 'claude-opus-5-5'])
 })
 
 test('fallback: a model with no fallback is never retried', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'hardest', failModels: ['claude-opus-5-5'], store: { isDefault: true, isOnboarded: true } })
+  const seen = engineStub(on, { classifyAnswer: 'hardest', failModels: ['claude-opus-5-5'], store: { isOnboarded: true } })
   await $.session.start(sessionStart())
   await $.turn.start({ text: 'redesign the auth architecture', turnId: 't2e' })
   await stepRun($, stepInput('t2e'))
@@ -269,7 +279,7 @@ test('fallback: a model with no fallback is never retried', async ($, on) => {
 })
 
 test('routing on: an unknown tier name leaves the turn alone', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'nope', store: { isDefault: true, isOnboarded: true } })
+  const seen = engineStub(on, { classifyAnswer: 'nope', store: { isOnboarded: true } })
   await $.session.start(sessionStart())
   await $.turn.start({ text: 'anything', turnId: 't3' })
   await stepRun($, stepInput('t3'))
@@ -277,7 +287,7 @@ test('routing on: an unknown tier name leaves the turn alone', async ($, on) => 
 })
 
 test('subagent: an undecided spawn gets the tier model and its steps get the effort', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'moderate', store: { isDefault: true, isOnboarded: true } })
+  const seen = engineStub(on, { classifyAnswer: 'moderate', store: { isOnboarded: true } })
   await $.session.start(sessionStart())
   const spawned = await $.agent.spawn(spawnInput())
   expect(seen.spawnModels).toEqual(['claude-sonnet-5-5'])
@@ -288,7 +298,7 @@ test('subagent: an undecided spawn gets the tier model and its steps get the eff
 })
 
 test('subagent: an explicit model or a fork is never rerouted', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'trivial', store: { isDefault: true, isOnboarded: true } })
+  const seen = engineStub(on, { classifyAnswer: 'trivial', store: { isOnboarded: true } })
   await $.session.start(sessionStart())
   await $.agent.spawn(spawnInput({ model: 'opus' }))
   await $.agent.spawn(spawnInput({ subagentType: 'fork', fork: true }))
@@ -296,7 +306,7 @@ test('subagent: an explicit model or a fork is never rerouted', async ($, on) =>
 })
 
 test('/model with a name passes through and turns routing off', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'trivial', store: { isDefault: true, isOnboarded: true } })
+  const seen = engineStub(on, { classifyAnswer: 'trivial', store: { isOnboarded: true } })
   await $.session.start(sessionStart())
   await $.command.run(commandInput('model', 'opus'))
   expect(seen.commands).toContain('model opus')
@@ -318,18 +328,18 @@ test('/cc-model-router on, off and status', async ($, on) => {
   engineStub(on)
   await $.session.start(sessionStart())
   const turnedOn = await $.command.run(commandInput('cc-model-router', 'on'))
-  expect(turnedOn.text).toMatch(/on, and the default/)
+  expect(turnedOn.text).toMatch(/on\./)
   const turnedOff = await $.command.run(commandInput('cc-model-router', 'off'))
-  expect(turnedOff.text).toMatch(/off/)
+  expect(turnedOff.text).toMatch(/off for this session/)
   const status = await $.command.run(commandInput('cc-model-router', 'status'))
-  expect(status.text).toMatch(/CC Model Router: off/)
+  expect(status.text).toMatch(/CC Model Router: off for this session/)
   expect(status.text).toMatch(/trivial\s+claude-haiku-5-5/)
   const config = await $.command.run(commandInput('cc-model-router', 'config'))
   expect(config.text).toMatch(/config: \/home\/me\/.claude\/cc-model-router\/config.json/)
 })
 
 test('a manual model switch elsewhere turns routing off', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'trivial', store: { isDefault: true, isOnboarded: true } })
+  const seen = engineStub(on, { classifyAnswer: 'trivial', store: { isOnboarded: true } })
   await $.session.start(sessionStart())
   await $.classic.PostModelSwitch({
     from_model: 'a',
@@ -348,7 +358,7 @@ test('a manual model switch elsewhere turns routing off', async ($, on) => {
 })
 
 test('an automatic switch (fallback, resume) leaves routing on', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'trivial', store: { isDefault: true, isOnboarded: true } })
+  const seen = engineStub(on, { classifyAnswer: 'trivial', store: { isOnboarded: true } })
   await $.session.start(sessionStart())
   await $.classic.PostModelSwitch({
     from_model: 'a',
@@ -382,7 +392,7 @@ test('headless start never opens onboarding', async ($, on) => {
 })
 
 test('jev: with a key the classifier posts to typesafe and maps the choice', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'trivial', env: { TYPESAFE_API_KEY: 'k' }, store: { isDefault: true, isOnboarded: true } })
+  const seen = engineStub(on, { classifyAnswer: 'trivial', env: { TYPESAFE_API_KEY: 'k' }, store: { isOnboarded: true } })
   const bodies: string[] = []
   on('http.fetch', ($, e) => {
     bodies.push(e.init?.body ?? '')
@@ -398,7 +408,7 @@ test('jev: with a key the classifier posts to typesafe and maps the choice', asy
 })
 
 test('jev: a 429 is retried once, a 401 falls back to claude', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'trivial', env: { TYPESAFE_API_KEY: 'k' }, store: { isDefault: true, isOnboarded: true } })
+  const seen = engineStub(on, { classifyAnswer: 'trivial', env: { TYPESAFE_API_KEY: 'k' }, store: { isOnboarded: true } })
   const statuses = [429, 200, 401]
   on('http.fetch', () => {
     const status = statuses.shift() ?? 500
@@ -414,14 +424,14 @@ test('jev: a 429 is retried once, a 401 falls back to claude', async ($, on) => 
 })
 
 test('subagent: a workflow agent is never rerouted', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'trivial', store: { isDefault: true, isOnboarded: true } })
+  const seen = engineStub(on, { classifyAnswer: 'trivial', store: { isOnboarded: true } })
   await $.session.start(sessionStart())
   await $.agent.spawn(spawnInput({ workflow: { runId: 'wf_1', agentIndex: 1 } }))
   expect(seen.spawnModels).toEqual([undefined])
 })
 
 test('subagent: the route outlives one run, so a woken subagent keeps its tier', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'moderate', store: { isDefault: true, isOnboarded: true } })
+  const seen = engineStub(on, { classifyAnswer: 'moderate', store: { isOnboarded: true } })
   await $.session.start(sessionStart())
   await $.agent.spawn(spawnInput())
   await $.turn.complete({ ...completeInput('t10'), agentId: 'agent-1' })
@@ -490,7 +500,7 @@ async function settled(isDone: () => boolean): Promise<void> {
   for (let tries = 0; tries < 500 && !isDone(); tries += 1) await Promise.resolve()
 }
 
-const ROUTING_ON = { isDefault: true, isOnboarded: true }
+const ROUTING_ON = { isOnboarded: true }
 
 test('subagent: general-purpose is capped at moderate, other types keep the classifier pick', async ($, on) => {
   const seen = engineStub(on, { classifyAnswer: 'hardest', store: ROUTING_ON })

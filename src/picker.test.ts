@@ -8,24 +8,22 @@ const MODELS = ['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'cla
 const noop = () => undefined
 
 test('picker: router row is option 2 and reads selected while routing', async () => {
-  const rows = pickerRows({ sessionModel: 'claude-fable-5-2[1m]', tierModels: MODELS, isRouting: true, isDefault: true, onDefault: noop, onRouter: noop, onModel: noop })
+  const rows = pickerRows({ sessionModel: 'claude-fable-5-2[1m]', tierModels: MODELS, isRouting: true, onDefault: noop, onRouter: noop, onModel: noop })
   expect(rows[1]?.label).toBe('CC Model Router')
   expect(rows[1]?.isSelected).toBe(true)
-  expect(rows[1]?.isDefault).toBe(true)
   expect(rows.filter((row) => row.isSelected)).toHaveLength(1)
   expect(rows).toHaveLength(2 + MODELS.length)
 })
 
 test('picker: a manual pick marks that tier model, not Default', async () => {
-  const rows = pickerRows({ sessionModel: 'claude-opus-5-5', tierModels: MODELS, isRouting: false, isDefault: true, onDefault: noop, onRouter: noop, onModel: noop })
+  const rows = pickerRows({ sessionModel: 'claude-opus-5-5', tierModels: MODELS, isRouting: false, onDefault: noop, onRouter: noop, onModel: noop })
   expect(rows[0]?.isSelected).toBe(false)
   expect(rows[1]?.isSelected).toBe(false)
-  expect(rows[1]?.isDefault).toBe(true)
   expect(rows.find((row) => row.key === 'claude-opus-5-5')?.isSelected).toBe(true)
 })
 
 test('picker: a session model outside the tiers marks Default', async () => {
-  const rows = pickerRows({ sessionModel: 'claude-sonnet-4-6', tierModels: MODELS, isRouting: false, isDefault: false, onDefault: noop, onRouter: noop, onModel: noop })
+  const rows = pickerRows({ sessionModel: 'claude-sonnet-4-6', tierModels: MODELS, isRouting: false, onDefault: noop, onRouter: noop, onModel: noop })
   expect(rows[0]?.isSelected).toBe(true)
   expect(rows[0]?.label).toBe('Default')
   expect(rows.filter((row) => row.isSelected)).toHaveLength(1)

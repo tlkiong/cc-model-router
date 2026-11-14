@@ -12,7 +12,6 @@ import { fallbackFind, tierCap, tierFind, tierModels, tierTableLines } from './t
 
 const COMMAND = PLUGIN
 const COMMAND_ARGS = 'on | off | status | config | update-config [--force] | onboard'
-const STORE_IS_DEFAULT = 'isDefault'
 const STORE_IS_ONBOARDED = 'isOnboarded'
 const STORE_RESUME_AFTER_CLEAR = 'resumeAfterClear'
 
@@ -137,9 +136,8 @@ async function stateFileWrite($: EngineInterface, isRouting: boolean): Promise<v
   }
 }
 
-async function routingSet($: EngineInterface, isOn: boolean, options: { isDefault?: boolean } = {}): Promise<void> {
+async function routingSet($: EngineInterface, isOn: boolean): Promise<void> {
   await update($, isRoutingAtom, () => isOn)
-  if (options.isDefault !== undefined) await $.store.set(STORE_IS_DEFAULT, options.isDefault)
   await stateFileWrite($, isOn)
 }
 
@@ -152,10 +150,6 @@ async function isRoutingRead($: EngineInterface): Promise<boolean> {
   return read($, isRoutingAtom)
 }
 
-async function isDefaultRead($: EngineInterface): Promise<boolean> {
-  return (await $.store.get(STORE_IS_DEFAULT)) === true
-}
-
 async function onboardingOpen($: EngineInterface): Promise<void> {
   // Marked before the pane shows, so an Esc does not bring it back every session
   await $.store.set(STORE_IS_ONBOARDED, true)
@@ -163,7 +157,7 @@ async function onboardingOpen($: EngineInterface): Promise<void> {
 }
 
 async function routerEnable($: EngineInterface, paneId: string): Promise<void> {
-  await routingSet($, true, { isDefault: true })
+  await routingSet($, true)
   await $.ui.close({ id: paneId })
   $.ui.toast(`${LABEL} on`)
 }
@@ -177,7 +171,7 @@ async function statusReport($: EngineInterface): Promise<string> {
   const config = await configLoad($)
   const route = await read($, lastRouteAtom)
   const lines = [
-    `${LABEL}: ${(await isRoutingRead($)) ? 'on' : 'off'}${(await isDefaultRead($)) ? ' (default for new sessions)' : ''}`,
+    `${LABEL}: ${(await isRoutingRead($)) ? 'on' : 'off for this session'}`,
     `last route: ${route ? `${route.tier} -> ${route.model} / ${route.effort}` : 'none yet'}`,
     `classifier: ${classifierLabel(await classifierResolve($, config), config)}`,
     '',
@@ -224,7 +218,8 @@ export const register: Register = function register(on) {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: COMMAND, description: `${LABEL}: ${COMMAND_ARGS}`, argumentHint: COMMAND_ARGS })
     await configLoad($)
-    await routingSet($, await isDefaultRead($))
+    // Installed means on: every new session starts routed, and only a pick made during that session turns it off
+    await routingSet($, true)
     const isOnboarded = (await $.store.get(STORE_IS_ONBOARDED)) === true
     if (!isOnboarded && e.surface !== null) await onboardingOpen($)
     return next(e)
@@ -346,7 +341,7 @@ export const register: Register = function register(on) {
   })
 
   on('session.end', async ($, e, next) => {
-    if (e.reason === 'clear' && (await isRoutingRead($))) await $.store.set(STORE_RESUME_AFTER_CLEAR, true)
+    if (e.reason === 'clear') await $.store.set(STORE_RESUME_AFTER_CLEAR, true)
     routesClear()
     // /clear and resume start a new conversation under a new id, so the previous turn's tier no longer counts for a step-up
     await update($, lastRouteAtom, () => null)
@@ -358,11 +353,11 @@ export const register: Register = function register(on) {
     const [verb = '', flag = ''] = e.args.trim().split(/\s+/)
     switch (verb) {
       case 'on':
-        await routingSet($, true, { isDefault: true })
-        return { text: `${LABEL} on, and the default for new sessions.` }
+        await routingSet($, true)
+        return { text: `${LABEL} on.` }
       case 'off':
-        await routingSet($, false, { isDefault: false })
-        return { text: `${LABEL} off. /model picks the session model again.` }
+        await routingSet($, false)
+        return { text: `${LABEL} off for this session, back on in the next session or after /clear. /model picks the session model.` }
       case 'config':
         return { text: await configReport($) }
       case 'update-config':
@@ -394,7 +389,6 @@ export const register: Register = function register(on) {
       sessionModel: await $.session.model(),
       tierModels: tierModels(config),
       isRouting: await isRoutingRead($),
-      isDefault: await isDefaultRead($),
       onDefault: () => sessionModelPick($, 'default'),
       onRouter: () => routerEnable($, PICKER_PANE),
       onModel: (model) => sessionModelPick($, model),
@@ -418,7 +412,6 @@ export const register: Register = function register(on) {
         live === 'jev' ? `classifier: ${label}, ${JEV_KEY_ENV} found` : `classifier: ${label}. Set ${JEV_KEY_ENV} in your shell or in the env block of ~/.claude/settings.json to use Jev.`,
       configLine: `config: ${configPath(home)} (edits apply on the next turn)`,
       stateLine: `status line state: ${stateFilePath(home, '<session_id>')}`,
-      onEnable: () => routerEnable($, ONBOARDING_PANE),
       onDismiss: () => $.ui.close({ id: ONBOARDING_PANE }),
     })
   })

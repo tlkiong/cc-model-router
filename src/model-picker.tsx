@@ -12,13 +12,12 @@ export function pickerHeight(config: Config): number {
 
 export type TreeElements = { Box: ElementConstructor<BoxProps>; Text: ElementConstructor<TextProps>; Button: ElementConstructor<ButtonProps> }
 
-export type PickerRow = { key: string; label: string; isSelected: boolean; isDefault: boolean; onPress: () => void | Promise<void> }
+export type PickerRow = { key: string; label: string; isSelected: boolean; onPress: () => void | Promise<void> }
 
 export type PickerRowsInput = {
   sessionModel: string
   tierModels: readonly string[]
   isRouting: boolean
-  isDefault: boolean
   onDefault: () => void | Promise<void>
   onRouter: () => void | Promise<void>
   onModel: (model: string) => void | Promise<void>
@@ -28,11 +27,11 @@ export function pickerRows(input: PickerRowsInput): PickerRow[] {
   const session = modelIdNormalize(input.sessionModel)
   const isSessionOnTier = !input.isRouting && input.tierModels.some((model) => modelIdNormalize(model) === session)
   const rows: PickerRow[] = [
-    { key: 'default', label: 'Default', isSelected: !input.isRouting && !isSessionOnTier, isDefault: false, onPress: input.onDefault },
-    { key: 'router', label: LABEL, isSelected: input.isRouting, isDefault: input.isDefault, onPress: input.onRouter },
+    { key: 'default', label: 'Default', isSelected: !input.isRouting && !isSessionOnTier, onPress: input.onDefault },
+    { key: 'router', label: LABEL, isSelected: input.isRouting, onPress: input.onRouter },
   ]
   for (const model of input.tierModels) {
-    rows.push({ key: model, label: model, isSelected: !input.isRouting && modelIdNormalize(model) === session, isDefault: false, onPress: () => input.onModel(model) })
+    rows.push({ key: model, label: model, isSelected: !input.isRouting && modelIdNormalize(model) === session, onPress: () => input.onModel(model) })
   }
   return rows
 }
@@ -47,7 +46,6 @@ export function pickerTree({ Box, Text, Button }: TreeElements, input: PickerTre
           <Button key={row.key} plain hotkey={index < 9 ? String(index + 1) : undefined} variant={row.isSelected ? 'primary' : undefined} onPress={row.onPress}>
             {row.isSelected ? '✓ ' : '  '}
             {row.label}
-            {row.isDefault ? <Text dimColor> default</Text> : null}
             {row.isSelected ? <Text dimColor> selected</Text> : null}
           </Button>
         ))}

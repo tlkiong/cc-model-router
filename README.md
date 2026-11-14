@@ -25,8 +25,9 @@ Answer `y` to add the marketplace, pick the user scope, done. On the next start 
 6  claude-fable-5-2
 ```
 
-- Option 2 turns routing on and makes it the default for new sessions.
-- Any other option sets that session model and turns routing off, as does `/model <name>` typed with a name.
+- Routing is on in every session once the mod is installed, including after `/clear`. There is nothing to enable.
+- Option 2 turns it back on during a session.
+- Any other option sets that session model and turns routing off for that session only, as does `/model <name>` typed with a name. A new session or a `/clear` turns it on again.
 - `/cc-model-router on | off | status | config | update-config [--force] | onboard` does the same from the prompt and prints the live route, the classifier in use, and the tier table.
 
 `/cc-model-router status` shows the live route. The status line recipe below shows the router's name in place of the model.
