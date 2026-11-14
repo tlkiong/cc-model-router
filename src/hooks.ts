@@ -13,7 +13,6 @@ import { fallbackFind, tierCap, tierFind, tierModels, tierTableLines } from './t
 const COMMAND = PLUGIN
 const COMMAND_ARGS = 'on | off | status | config | update-config [--force] | onboard'
 const STORE_IS_ONBOARDED = 'isOnboarded'
-const STORE_RESUME_AFTER_CLEAR = 'resumeAfterClear'
 
 // The engine's scan reads atoms only from the hooks file, with literal plugin and key
 const isRoutingAtom = atom({ plugin: 'cc-model-router', key: 'isRouting' } as const, false)
@@ -225,12 +224,13 @@ export const register: Register = function register(on) {
     return next(e)
   })
 
+  on('classic.SessionStart', async ($, e, next) => {
+    // A typed /clear fires no session.start, only this, already under the new session id; waiting for the next turn would leave /model and the status line showing off
+    if (e.source === 'clear') await routingSet($, true)
+    return next(e)
+  })
+
   on('turn.start', async ($, e, next) => {
-    // A typed /clear fires session.end but no session.start, so nothing else turns routing back on for the new conversation
-    if ((await $.store.get(STORE_RESUME_AFTER_CLEAR)) === true) {
-      await $.store.set(STORE_RESUME_AFTER_CLEAR, false)
-      await routingSet($, true)
-    }
     if (e.text.trim().length === 0 || !(await isRoutingRead($))) return next(e)
     try {
       const config = await configLoad($)
@@ -341,7 +341,6 @@ export const register: Register = function register(on) {
   })
 
   on('session.end', async ($, e, next) => {
-    if (e.reason === 'clear') await $.store.set(STORE_RESUME_AFTER_CLEAR, true)
     routesClear()
     // /clear and resume start a new conversation under a new id, so the previous turn's tier no longer counts for a step-up
     await update($, lastRouteAtom, () => null)

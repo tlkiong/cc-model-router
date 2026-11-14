@@ -104,6 +104,7 @@ function engineStub(on: On, options: StubOptions = {}): Seen {
     return { text: '' }
   })
   on('classic.PostModelSwitch', () => ({}))
+  on('classic.SessionStart', () => ({}))
   return seen
 }
 
@@ -218,25 +219,38 @@ test('step-up: a tier with no stepUp entry keeps its effort when picked twice', 
 })
 
 // The real engine drops the routing switch across a typed /clear, which `off` stands in for: only the remembered flag can turn it back on
-test('/clear: routing on before the clear is put back on the next turn', async ($, on) => {
-  const seen = engineStub(on, { classifyAnswer: 'complex', store: { isOnboarded: true } })
-  await $.session.start(sessionStart())
+async function clearRun($: Pick<Engine, 'session' | 'classic'>): Promise<void> {
   await $.session.end({ reason: 'clear', sessionId: 'sess-1', resume: { id: 'sess-1' } } as SessionEndInput)
+  await $.classic.SessionStart({ source: 'clear' })
+}
+
+test('/clear: routing is on again at once, before any prompt is sent', async ($, on) => {
+  engineStub(on, { classifyAnswer: 'complex', store: { isOnboarded: true } })
+  await $.session.start(sessionStart())
   await $.command.run(commandInput('cc-model-router', 'off'))
-  await $.turn.start({ text: 'refactor the auth module', turnId: 't3a' })
-  await stepRun($, stepInput('t3a'))
-  expect(seen.stepModels).toEqual(['claude-opus-5-5'])
-  expect(seen.stepEfforts).toEqual(['medium'])
+  await clearRun($)
+  expect((await $.command.run(commandInput('cc-model-router', 'status'))).text).not.toMatch(/off for this session/)
 })
 
 test('/clear: routing turned off during the session is on again afterwards', async ($, on) => {
   const seen = engineStub(on, { classifyAnswer: 'complex', store: { isOnboarded: true } })
   await $.session.start(sessionStart())
   await $.command.run(commandInput('cc-model-router', 'off'))
-  await $.session.end({ reason: 'clear', sessionId: 'sess-1', resume: { id: 'sess-1' } } as SessionEndInput)
+  await clearRun($)
   await $.turn.start({ text: 'refactor the auth module', turnId: 't3b' })
   await stepRun($, stepInput('t3b'))
   expect(seen.stepModels).toEqual(['claude-opus-5-5'])
+  expect(seen.stepEfforts).toEqual(['medium'])
+})
+
+test('/clear: routing turned off after the clear stays off for the next turn', async ($, on) => {
+  const seen = engineStub(on, { classifyAnswer: 'complex', store: { isOnboarded: true } })
+  await $.session.start(sessionStart())
+  await clearRun($)
+  await $.command.run(commandInput('cc-model-router', 'off'))
+  await $.turn.start({ text: 'refactor the auth module', turnId: 't3c' })
+  await stepRun($, stepInput('t3c'))
+  expect(seen.stepModels).toEqual([SESSION_MODEL])
 })
 
 test('step-up: a /clear (session end, then a new id) starts the streak over', async ($, on) => {
